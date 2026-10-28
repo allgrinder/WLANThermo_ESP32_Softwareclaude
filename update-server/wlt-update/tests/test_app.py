@@ -272,3 +272,10 @@ def test_manual_import(env):
         f.write(b"no esp image")
     app.state.firmware.poll()
     assert client.post("/", json=update_req()).json()["update"]["version"] == "v1.2.4-gas.7"
+
+
+def test_telemetry_unsynced_device_clock_uses_server_time(env):
+    _, client, _ = env
+    client.post("/telemetry", json=batch(10_000, 5, now=12))  # clock not set (1970)
+    s = client.get("/sessions").json()
+    assert len(s) == 1 and s[0]["start"].startswith("20")

@@ -77,8 +77,8 @@ class Store:
         server_now = time.time()
         dev_now = float(batch.get("now", 0) or 0)
         now_ms = float(batch.get("now_ms", 0) or 0)
-        # device clock only if plausible (synced via HTTP Date header)
-        base = dev_now if abs(dev_now - server_now) < 3600 else server_now
+        # device clock once it is synced (HTTP Date header), else server time
+        base = dev_now if dev_now > 1600000000 else server_now
         stored = 0
         with self.lock:
             for row in rows:

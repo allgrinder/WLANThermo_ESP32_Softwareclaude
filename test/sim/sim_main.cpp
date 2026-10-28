@@ -129,6 +129,7 @@ public:
     flameOutEventMs = 0;
     saves = 0;
     csv = NULL;
+    csvStepMs = 5000u;
   }
 
   ~Sim()
@@ -141,8 +142,8 @@ public:
 
   void openCsv(const std::string &name)
   {
-    csv = new std::ofstream(gOutDir + "/" + name + ".csv");
-    *csv << "t_s,raw,temp,set,output,opening,p,i,d,esum,jump,lid,flame_susp,flame_out,at_phase,at_cycle,chamber\n";
+    csv = new std::ofstream(name.find('/') != std::string::npos || name.find(".csv") != std::string::npos ? name : gOutDir + "/" + name + ".csv");
+    *csv << "t_s,raw,temp,set,output,opening,p,i,d,esum,jump,lid,flame_susp,flame_out,at_phase,at_cycle,chamber,servo_us,at_state,type\n";
   }
 
   // servo position seen by the valve: the servo follows the PWM while it
@@ -184,7 +185,7 @@ public:
         flameOutEventMs = gSimMillis;
       updateServo();
 
-      if (csv && ((gSimMillis % 5000u) == 0u))
+      if (csv && ((gSimMillis % csvStepMs) == 0u))
         writeCsv();
     }
   }
@@ -198,7 +199,8 @@ public:
          << fmt(pid->getP(), 2) << "," << fmt(pid->getI(), 2) << "," << fmt(pid->getD(), 2) << "," << fmt(pid->getEsum(), 1) << ","
          << (pid->isJump() ? 1 : 0) << "," << (pm->getOPLStatus() ? 1 : 0) << "," << (pm->isFlameOutSuspected() ? 1 : 0) << ","
          << (pm->isFlameOut() ? 1 : 0) << "," << (at ? (int)at->getPhase() : 0) << "," << (at ? (int)at->getCycle() : 0) << ","
-         << fmt(plant.getChamber(), 2) << "\n";
+         << fmt(plant.getChamber(), 2) << "," << pm->getServoPulseUs() << "," << (at ? (int)at->getState() : 0) << ","
+         << (int)pm->getType() << "\n";
   }
 
   void runFor(double seconds)
@@ -234,6 +236,7 @@ public:
   uint32_t flameOutEventMs;
   int saves;
   std::ofstream *csv;
+  uint32_t csvStepMs;
 };
 
 // statistics on the device temperature over a time span
@@ -581,8 +584,47 @@ static PidOnlyResult runPidOnly(const PlantParams &plant, float setpoint, float 
   return r;
 }
 
+// a typical cook evening on a given plant, written as 1 s CSV for the
+// logger and analysis tools (tools/sim_to_logger.py, analyze_cook.py)
+static void runCook(const PlantParams &plant, const std::string &csvName, bool autotune)
+{
+  gOutDir = ".";
+  Sim sim(plant, makeGasProfile(2.0f), 130, 20.0, 4242);
+  sim.csvStepMs = 1000u;
+  sim.openCsv(csvName);
+  sim.pm->setType(pm_auto);
+  if (autotune)
+  {
+    sim.runFor(2);
+    sim.pm->startAutoTune();
+    sim.runUntil([&]() { return !sim.pm->isAutoTuneRunning(); }, 120 * 60);
+  }
+  sim.runFor(60 * 60);
+  sim.plant.lidOpen = true; // spritzing
+  sim.runFor(45);
+  sim.plant.lidOpen = false;
+  sim.runFor(45 * 60);
+  sim.pm->setTargetTemperature(150);
+  sim.runFor(45 * 60);
+  sim.plant.lidOpen = true; // wrapping
+  sim.runFor(90);
+  sim.plant.lidOpen = false;
+  sim.runFor(40 * 60);
+  sim.plant.flameOut = true; // gas bottle empty
+  sim.runFor(15 * 60);
+}
+
 int main(int argc, char **argv)
 {
+  if (argc >= 10 && std::string(argv[1]) == "--cook")
+  {
+    // --cook out.csv L tau tMin tMax sensorLag valveExp [autotune 0/1]
+    PlantParams p = makePlant("cook", atof(argv[3]), atof(argv[4]), atof(argv[5]), atof(argv[6]), atof(argv[7]));
+    p.valveExp = atof(argv[8]);
+    runCook(p, argv[2], atoi(argv[9]) != 0);
+    return 0;
+  }
+
   if (argc == 5 && std::string(argv[1]) == "--defaults")
   {
     float kp = atof(argv[2]), ki = atof(argv[3]), kd = atof(argv[4]);
