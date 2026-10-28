@@ -209,6 +209,8 @@ void API::pitAry(JsonArray &jAry, int cc, bool extended)
       {
         ma["flameOut"] = (boolean)pm->isFlameOut();
         ma["lid"] = (boolean)pm->getOPLStatus();
+        // smart control: number of learned temperature points (10 °C steps)
+        ma["learned"] = pm->getBiasMap()->knownCount();
         JsonObject &_at = ma.createNestedObject("autotune");
         autotuneObj(_at, pm);
       }
@@ -247,6 +249,7 @@ void API::pidAry(JsonArray &jAry, int cc)
     _pid["foOn"] = (boolean)profile->flameOut;
     _pid["foDrop"] = (profile->foDrop > 0.0f) ? profile->foDrop : 15.0f;
     _pid["foWin"] = (profile->foWindow > 0u) ? profile->foWindow : 300u;
+    _pid["smart"] = (boolean)profile->smart;
   }
 }
 

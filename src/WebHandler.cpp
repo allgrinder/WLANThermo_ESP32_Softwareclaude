@@ -1131,6 +1131,8 @@ bool NanoWebHandler::setPID(AsyncWebServerRequest *request, uint8_t *datas)
     }
     if (_pid.containsKey("foWin"))
       profile->foWindow = constrain(_pid["foWin"].as<uint16_t>(), 60, 600);
+    if (_pid.containsKey("smart"))
+      profile->smart = _pid["smart"].as<boolean>();
 
     ii++;
   }
@@ -1280,7 +1282,7 @@ bool NanoWebHandler::setDCTest(AsyncWebServerRequest *request, uint8_t *datas)
 }
 
 // Autotune and flame out control
-// {"id":0, "cmd":"start"|"stop"|"ackFlameOut", "set":130}
+// {"id":0, "cmd":"start"|"stop"|"ackFlameOut"|"resetLearned", "set":130}
 bool NanoWebHandler::setAutotune(AsyncWebServerRequest *request, uint8_t *datas)
 {
   printRequest(datas);
@@ -1319,6 +1321,13 @@ bool NanoWebHandler::setAutotune(AsyncWebServerRequest *request, uint8_t *datas)
   else if (cmd == "ackFlameOut")
   {
     pm->acknowledgeFlameOut();
+    result = true;
+  }
+  else if (cmd == "resetLearned")
+  {
+    // smart control: forget the learned output table (e.g. after a change
+    // of the servo linkage)
+    pm->getBiasMap()->clear();
     result = true;
   }
 
