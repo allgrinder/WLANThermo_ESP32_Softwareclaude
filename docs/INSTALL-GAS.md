@@ -33,14 +33,30 @@ Ablauf in Kurzform:
 - Unraid: *Settings → Docker* auf „Advanced View“ stellen. Das eigene Netzwerk `br0` muss
   aktiv sein. Bei laufenden Containern geht das nur, wenn Docker kurz gestoppt wird.
 
-**Variante A: Compose** (Plugin „Docker Compose Manager“ oder Terminal):
+**Variante A: Unraid-Vorlagen** (empfohlen, ohne Plugin):
+
+1. Im Unraid-Terminal (*>_* oben rechts) die beiden Vorlagen holen:
+
+```bash
+cd /boot/config/plugins/dockerMan/templates-user && wget -q https://raw.githubusercontent.com/allgrinder/WLANThermo_ESP32_Softwareclaude/feature/gas-smart-control/update-server/unraid/my-wlt-update.xml https://raw.githubusercontent.com/allgrinder/WLANThermo_ESP32_Softwareclaude/feature/gas-smart-control/update-server/unraid/my-wlt-dns.xml && ls my-wlt-*
+```
+
+2. *Docker → Add Container*, oben bei *Template* unter „User templates“ `wlt-update` wählen.
+   Alles ist vorausgefüllt: Netzwerk `br0`, feste IP `192.168.178.250`, Datenordner
+   `/mnt/user/appdata/wlt-update`. *Apply*.
+3. Dasselbe mit `wlt-dns` (feste IP `192.168.178.251`). *Apply*.
+
+Nimmst du andere Adressen, musst du sie an drei Stellen ändern: die IP von `wlt-update`, dessen
+`PUBLIC_BASE_URL` und `OVERRIDE_IP` bei `wlt-dns`.
+
+**Variante B: Compose** (Plugin „Docker Compose Manager“ oder Terminal):
 
 ```bash
 mkdir -p /mnt/user/appdata/wlt && cd /mnt/user/appdata/wlt
 ```
 
 ```bash
-git clone --depth 1 -b feature/gas-servo-autotune https://github.com/allgrinder/WLANThermo_ESP32_Softwareclaude.git src
+git clone --depth 1 -b feature/gas-smart-control https://github.com/allgrinder/WLANThermo_ESP32_Softwareclaude.git src
 ```
 
 ```bash
@@ -53,24 +69,12 @@ Die `.env` passt so für dein Netz. Danach starten:
 docker compose up -d
 ```
 
-Die Images kommen fertig gebaut aus `ghcr.io/allgrinder/…`. Meldet `docker compose up` beim
-Holen „denied“, ist das Paket auf GitHub privat. Dann entweder auf GitHub unter *Packages →
-wlt-update → Package settings → Change visibility* auf öffentlich stellen, oder lokal bauen:
+Die Images kommen fertig gebaut aus `ghcr.io/allgrinder/…` und sind öffentlich. Ohne Internet
+auf Unraid lassen sie sich auch lokal bauen:
 
 ```bash
 docker compose build && docker compose up -d
 ```
-
-**Variante B: Unraid-Oberfläche** (*Docker → Add Container*, je Container):
-
-| Feld | wlt-update | wlt-dns |
-|---|---|---|
-| Repository | `ghcr.io/allgrinder/wlt-update:latest` | `ghcr.io/allgrinder/wlt-dns:latest` |
-| Network Type | `Custom: br0` | `Custom: br0` |
-| Fixed IP | `192.168.178.250` | `192.168.178.251` |
-| Extra Parameters | `--dns 1.1.1.1 --dns 9.9.9.9 --sysctl net.ipv4.ip_unprivileged_port_start=0` | – |
-| Pfad | `/data` → `/mnt/user/appdata/wlt-update` | – |
-| Variablen | `PUBLIC_BASE_URL=http://192.168.178.250`, `ALLOWED_NETS=192.168.178.0/24,127.0.0.0/8` | `OVERRIDE_IP=192.168.178.250` |
 
 **Prüfen** von einem PC im Heimnetz. Der Unraid-Host selbst erreicht `br0`-Container oft nicht,
 das ist normal.

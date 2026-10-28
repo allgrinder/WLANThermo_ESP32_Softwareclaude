@@ -1,6 +1,7 @@
 # Update-Server-Emulator und DNS-Umleitung
 
 Zwei Container für Unraid, Anleitung: [docs/INSTALL-GAS.md](../docs/INSTALL-GAS.md).
+Unraid-Vorlagen: [`unraid/my-wlt-update.xml`](unraid/my-wlt-update.xml) und [`unraid/my-wlt-dns.xml`](unraid/my-wlt-dns.xml).
 
 | Container | Aufgabe |
 |---|---|

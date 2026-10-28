@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<!--
+  Unraid template for wlt-update (WLANThermo gas fork), GPL-3.0.
+  Install: copy to /boot/config/plugins/dockerMan/templates-user/ and choose
+  it under Docker -> Add Container -> Template. See docs/INSTALL-GAS.md.
+-->
+<Container version="2">
+  <Name>wlt-update</Name>
+  <Repository>ghcr.io/allgrinder/wlt-update:latest</Repository>
+  <Registry>https://github.com/allgrinder/WLANThermo_ESP32_Softwareclaude/pkgs/container/wlt-update</Registry>
+  <Network>br0</Network>
+  <MyIP>192.168.178.250</MyIP>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/allgrinder/WLANThermo_ESP32_Softwareclaude</Support>
+  <Project>https://github.com/allgrinder/WLANThermo_ESP32_Softwareclaude/tree/feature/gas-smart-control/update-server</Project>
+  <Overview>Update server for the WLANThermo Nano V3 gas fork: offers the fork releases to the device, forwards all other requests unchanged to api.wlanthermo.de and records telemetry/cloud data as cook sessions. Needs a fixed IP in br0 (port 80). Reachable only from the home network.</Overview>
+  <Category>HomeAutomation: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:80]/health</WebUI>
+  <TemplateURL/>
+  <Icon/>
+  <ExtraParams>--restart=unless-stopped --dns=1.1.1.1 --dns=9.9.9.9 --sysctl net.ipv4.ip_unprivileged_port_start=0 --read-only --tmpfs /tmp --security-opt no-new-privileges:true --cap-drop=ALL --cap-add=CHOWN --cap-add=SETUID --cap-add=SETGID</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>Fixed IP in br0 outside the DHCP range of the FritzBox. The --dns entries make sure the real api.wlanthermo.de is resolved via public DNS, never via wlt-dns.</Requires>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/wlt-update" Mode="rw" Description="Firmware cache and SQLite database (cook sessions)" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/wlt-update</Config>
+  <Config Name="PUBLIC_BASE_URL" Target="PUBLIC_BASE_URL" Default="http://192.168.178.250" Mode="" Description="http:// plus the fixed IP of this container (must match the IP above)" Type="Variable" Display="always" Required="true" Mask="false">http://192.168.178.250</Config>
+  <Config Name="ALLOWED_NETS" Target="ALLOWED_NETS" Default="192.168.178.0/24,127.0.0.0/8" Mode="" Description="Only these networks may use telemetry, sessions and admin" Type="Variable" Display="always" Required="true" Mask="false">192.168.178.0/24,127.0.0.0/8</Config>
+  <Config Name="GITHUB_REPO" Target="GITHUB_REPO" Default="allgrinder/WLANThermo_ESP32_Softwareclaude" Mode="" Description="Repository with the gas fork releases" Type="Variable" Display="advanced" Required="true" Mask="false">allgrinder/WLANThermo_ESP32_Softwareclaude</Config>
+  <Config Name="GITHUB_TOKEN" Target="GITHUB_TOKEN" Default="" Mode="" Description="Only if the fork is private: fine-grained token, read only, only this repository (Contents: Read-only). Leave empty for a public fork." Type="Variable" Display="advanced" Required="false" Mask="true"/>
+  <Config Name="POLL_INTERVAL_S" Target="POLL_INTERVAL_S" Default="1800" Mode="" Description="How often new releases are fetched (seconds)" Type="Variable" Display="advanced" Required="false" Mask="false">1800</Config>
+  <Config Name="ROLLBACK_TAGS" Target="ROLLBACK_TAGS" Default="v1.2.4" Mode="" Description="Official firmware kept for a rollback (never offered automatically)" Type="Variable" Display="advanced" Required="false" Mask="false">v1.2.4</Config>
+  <Config Name="DEVICE_MAP" Target="DEVICE_MAP" Default="nano:v3=nanoV3" Mode="" Description="Device/hardware to firmware asset" Type="Variable" Display="advanced" Required="false" Mask="false">nano:v3=nanoV3</Config>
+  <Config Name="UPSTREAM_DNS" Target="UPSTREAM_DNS" Default="1.1.1.1,9.9.9.9" Mode="" Description="Public resolvers for the real api.wlanthermo.de (never the FritzBox)" Type="Variable" Display="advanced" Required="false" Mask="false">1.1.1.1,9.9.9.9</Config>
+  <Config Name="SESSION_GAP_S" Target="SESSION_GAP_S" Default="1800" Mode="" Description="A pause longer than this starts a new cook session (seconds)" Type="Variable" Display="advanced" Required="false" Mask="false">1800</Config>
+  <Config Name="TZ" Target="TZ" Default="Europe/Berlin" Mode="" Description="Time zone" Type="Variable" Display="advanced" Required="false" Mask="false">Europe/Berlin</Config>
+</Container>
