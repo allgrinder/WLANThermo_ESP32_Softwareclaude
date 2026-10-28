@@ -4,7 +4,7 @@
 > **im Heimnetz** laufen (lokal auf einem Rechner zu Hause) oder per **Tailscale** ins Heimnetz
 > kommen. Eine Cloud-Sitzung erreicht Gerät und Logger nicht.
 >
-> Vor dem ersten Einsatz die zwei Platzhalter unten ersetzen: `WLANTHERMO_IP` und das Datum.
+> Vor dem ersten Einsatz den Platzhalter `<DATUM>` ersetzen (Geräte-IP ist eingetragen).
 
 ---
 
@@ -17,7 +17,7 @@ Verbesserungen vor. Arbeite nur lesend. Ich entscheide über jede Änderung und 
 
 - **Repo:** https://github.com/allgrinder/WLANThermo_ESP32_Softwareclaude, Branch
   `feature/gas-servo-autotune` (lokal klonen, falls nicht vorhanden).
-- **Gerät:** WLANThermo Nano V3, Firmware `v1.2.4-gas.N`, WebUI/API `http://WLANTHERMO_IP`.
+- **Gerät:** WLANThermo Nano V3, Firmware `v1.2.4-gas.N`, WebUI/API `http://192.168.178.147`.
 - **Logger:** Container `wlt-update` auf Unraid, `http://192.168.178.250`. Sessions:
   `/sessions`, Telemetrie `/sessions/<id>.csv` (1 s), Cloud-Daten `/sessions/<id>/cloud.csv` (30 s).
 - **Setup:**
@@ -52,7 +52,7 @@ Verbesserungen vor. Arbeite nur lesend. Ich entscheide über jede Änderung und 
 ### 1. Erreichbarkeit prüfen
 
 ```bash
-curl -s -m 5 http://WLANTHERMO_IP/data | head -c 300
+curl -s -m 5 http://192.168.178.147/data | head -c 300
 ```
 
 ```bash
@@ -86,7 +86,7 @@ Danach `docs/cooks/<DATUM>/report.md` und `cook.png` ansehen.
 ### 3. Läuft der Cook noch? Dann beobachten
 
 ```bash
-python3 tools/live_watch.py --device http://WLANTHERMO_IP
+python3 tools/live_watch.py --device http://192.168.178.147
 ```
 
 Das liest alle 60 s `/data` und meldet nur Auffälligkeiten:

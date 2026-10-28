@@ -31,7 +31,7 @@ Sprache mit dem Nutzer: Deutsch. Code-Kommentare: Englisch, wie im Upstream.
 | Unraid | 192.168.178.77 |
 | `wlt-update` (Container, br0) | 192.168.178.250 |
 | `wlt-dns` (Container, br0, nur Erst-Update) | 192.168.178.251 |
-| WLANThermo | noch nicht genannt (in `docs/LIVE-ANALYSE.md` eintragen, sobald bekannt) |
+| WLANThermo | 192.168.178.147 |
 
 ## Stand
 
@@ -76,4 +76,3 @@ Sprache mit dem Nutzer: Deutsch. Code-Kommentare: Englisch, wie im Upstream.
    Die Simulationsparameter (P1–P3) sind bisher Annahmen, keine Messung.
 2. Danach neu bewerten: Ventil-Linearisierung (offen), Bremspunkt beim Anheizen (in der
    Simulation verworfen, schlechter bei Sollsprüngen).
-3. Geräte-IP in `docs/LIVE-ANALYSE.md` eintragen, sobald der Nutzer sie nennt.
