@@ -417,6 +417,14 @@ void Pitmaster::acknowledgeFlameOut()
     }
 }
 
+uint16_t Pitmaster::getServoPulseUs()
+{
+    if ((SERVO != initActuator) && (DAMPER != initActuator))
+        return 0u;
+
+    return (uint16_t)(ledcRead(this->channel2) * PM_SERVO_DUTY_CYCLE_DIVISOR);
+}
+
 uint8_t Pitmaster::takeEvents()
 {
     uint8_t currentEvents = this->events;

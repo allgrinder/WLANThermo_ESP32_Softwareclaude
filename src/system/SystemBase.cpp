@@ -84,6 +84,7 @@ void SystemBase::task(void *parameter)
     uint32_t time = esp_timer_get_time();
     system->update();
     time = esp_timer_get_time() - time;
+    system->telemetry.reportLoopTime(time);
     //printf("Performance: %dus\n", time);
 
     // Wait for the next cycle.
@@ -148,6 +149,7 @@ void SystemBase::update()
   {
     temperatures.refresh();
     pitmasters.update();
+    telemetry.capture();
 
     for (uint8_t i = 0; i < temperatures.count(); i++)
     {
@@ -247,6 +249,7 @@ void SystemBase::loadConfig()
   mqtt.loadConfig();
   notification.loadConfig();
   otaUpdate.loadConfig();
+  telemetry.loadConfig();
 }
 
 boolean SystemBase::isInitDone()

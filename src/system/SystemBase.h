@@ -34,6 +34,7 @@
 #include "Mqtt.h"
 #include "OtaUpdate.h"
 #include "Item.h"
+#include "Telemetry.h"
 
 #define MAX_PITMASTERS 2u
 #define MAX_PITMASTERPROFILES 5u
@@ -82,6 +83,7 @@ public:
   Mqtt mqtt;
   OtaUpdate otaUpdate;
   Item item;
+  Telemetry telemetry;
 
 protected:
   Buzzer *buzzer;

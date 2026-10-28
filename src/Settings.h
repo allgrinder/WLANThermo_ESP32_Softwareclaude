@@ -38,7 +38,8 @@ enum SettingsNvsKeys
   kServer,
   kBluetooth,
   kConnect,
-  kPbGuard
+  kPbGuard,
+  kTelemetry
 };
 
 typedef void (*SettingsOnChangeCallback)(SettingsNvsKeys);

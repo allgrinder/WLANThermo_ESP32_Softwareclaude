@@ -104,6 +104,7 @@ static const NanoWebHandlerListType nanoWebHandlerList[] = {
     {"/setapi", HTTP_POST, HTTP_POST, NULL, &NanoWebHandler::setServerAPI},
     {"/setDC", HTTP_POST, 0, NULL, &NanoWebHandler::setDCTest},
     {"/setautotune", HTTP_POST, HTTP_POST, NULL, &NanoWebHandler::setAutotune},
+    {"/settelemetry", HTTP_POST, HTTP_POST, NULL, &NanoWebHandler::setTelemetry},
     {"/setbluetooth", HTTP_POST, HTTP_POST, NULL, &NanoWebHandler::setBluetooth}};
 
 NanoWebHandler::NanoWebHandler()
@@ -1314,6 +1315,34 @@ bool NanoWebHandler::setAutotune(AsyncWebServerRequest *request, uint8_t *datas)
   gSystem->pitmasters.saveConfig();
 
   return result;
+}
+
+// Debug telemetry (gas fork): {"enabled":true,"url":"http://192.168.178.250/telemetry","interval":1}
+bool NanoWebHandler::setTelemetry(AsyncWebServerRequest *request, uint8_t *datas)
+{
+  printRequest(datas);
+
+  DynamicJsonBuffer jsonBuffer;
+  JsonObject &json = jsonBuffer.parseObject((const char *)datas);
+  if (!json.success())
+    return false;
+
+  TelemetryConfig config = gSystem->telemetry.getConfig();
+  if (json.containsKey("enabled"))
+    config.enabled = json["enabled"].as<boolean>();
+  if (json.containsKey("url"))
+  {
+    String url = json["url"].asString();
+    // plain http only (no TLS on the device)
+    if ((url.length() > 0u) && !url.startsWith("http://"))
+      return false;
+    config.url = url;
+  }
+  if (json.containsKey("interval"))
+    config.interval = json["interval"].as<uint8_t>();
+
+  gSystem->telemetry.setConfig(config);
+  return true;
 }
 
 bool NanoWebHandler::setBluetooth(AsyncWebServerRequest *request, uint8_t *datas)

@@ -146,6 +146,7 @@ public:
   void acknowledgeFlameOut();
   float getMinOutput();
   float getFilteredTemperature() { return this->filteredTemp; }
+  uint16_t getServoPulseUs();
   uint8_t takeEvents();
   void registerCallback(PitmasterCallback_t callback, void *userData);
   void unregisterCallback();

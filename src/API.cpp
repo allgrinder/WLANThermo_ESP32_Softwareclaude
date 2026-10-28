@@ -505,6 +505,15 @@ void API::settingsObj(JsonObject &jObj)
   // IOT
   JsonObject &_iot = jObj.createNestedObject("iot");
   iotObj(_iot);
+
+  // TELEMETRY (gas fork)
+  TelemetryConfig telemetryConfig = gSystem->telemetry.getConfig();
+  JsonObject &_tel = jObj.createNestedObject("telemetry");
+  _tel["enabled"] = telemetryConfig.enabled;
+  _tel["url"] = telemetryConfig.url;
+  _tel["interval"] = telemetryConfig.interval;
+  _tel["sent"] = gSystem->telemetry.getSent();
+  _tel["dropped"] = gSystem->telemetry.getDropped();
 }
 
 // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
