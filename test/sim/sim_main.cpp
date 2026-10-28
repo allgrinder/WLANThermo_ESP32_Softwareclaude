@@ -510,6 +510,31 @@ static void runRestartScenario()
   check(fabs(sim.opening - minOutput) < 0.6, "restart: still at minOutput after 10 min");
 }
 
+// security review finding (docs/SECURITY-REVIEW.md, fail-safe): a restart
+// (watchdog, crash, power glitch) with the saved type "off" does not move
+// the servo at all, it keeps the position it had (e.g. big flame).
+static void reportRestartWithTypeOff()
+{
+  const float minOutput = 10.0f;
+  PlantParams plant = makePlant("P2", 40, 420, 75, 250, 20);
+  Sim sim(plant, makeGasProfile(minOutput), 150, 20.0, 13);
+  sim.pm->setType(pm_manual);
+  sim.pm->setValue(80);
+  sim.runFor(60);
+  double before = sim.opening;
+  // restart: PWM stops, servo holds; saved config: type off
+  resetIo();
+  delete sim.pm;
+  sim.pm = new Pitmaster(IO1, CH1, IO2, CH2);
+  sim.pm->assignProfile(&sim.profile);
+  sim.pm->assignTemperature(&sim.temperature);
+  sim.pm->setTargetTemperature(150);
+  sim.pm->setType(pm_off);
+  sim.runFor(600);
+  std::cout << "info: restart with saved type off: servo " << fmt(before, 1) << " % -> " << fmt(sim.opening, 1)
+            << " % after 10 min (not moved, see SECURITY-REVIEW F-6)" << std::endl;
+}
+
 // pitmaster off (also outside autotune) parks the servo at minOutput
 static void runOffScenario()
 {
@@ -690,6 +715,7 @@ int main(int argc, char **argv)
 
   runAbortScenarios();
   runRestartScenario();
+  reportRestartWithTypeOff();
   runOffScenario();
   for (size_t i = 0; i < plants.size(); i++)
     runNoFalseAlarm(plants[i], 130);
