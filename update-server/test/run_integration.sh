@@ -8,7 +8,8 @@ TEST_DATA=$(mktemp -d)
 mkdir -p "$TEST_DATA/fw/import"
 printf '\351fake-gas-firmware' > "$TEST_DATA/fw/import/nanoV3-v1.2.4-gas.1.bin"
 printf '\351fake-official-firmware' > "$TEST_DATA/fw/import/nanoV3-v1.2.4.bin"
-chmod -R 777 "$TEST_DATA"
+# like Unraid appdata: owned by someone else than wlt, not world writable
+chmod -R 755 "$TEST_DATA"
 export TEST_DATA
 docker compose -p wlttest -f docker-compose.test.yml up --abort-on-container-exit --exit-code-from tester tester; rc=$?
 docker compose -p wlttest -f docker-compose.test.yml logs wlt-update wlt-dns | tail -40

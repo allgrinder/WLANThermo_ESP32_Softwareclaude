@@ -38,6 +38,11 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # only for the start: hand /data to the user wlt, then drop to it
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
 
   wlt-dns:
     # only needed for the first update (DNS override), see docs/INSTALL-GAS.md
