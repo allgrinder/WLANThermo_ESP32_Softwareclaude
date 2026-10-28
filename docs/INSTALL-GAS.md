@@ -83,7 +83,7 @@ das ist normal.
 curl http://192.168.178.250/health
 ```
 
-In der Antwort muss bei `latest` die neueste Gas-Version stehen (z. B. `v1.2.4-gas.1`), und
+In der Antwort muss bei `latest` die neueste Gas-Version stehen (z. B. `v1.2.4-gas.2`), und
 `files` muss `nanoV3-v1.2.4.bin` für den Rollback enthalten. `last_error` sollte leer sein.
 
 ## 2. FritzBox umstellen (nur für das Erst-Update)
@@ -93,53 +93,59 @@ In der Antwort muss bei `latest` die neueste Gas-Version stehen (z. B. `v1.2.4-g
    - Bevorzugt: `192.168.178.251`
    - Alternativ: `1.1.1.1`
    - *Übernehmen*
+2. *Internet → Zugangsdaten → Reiter IPv6*: Haken bei „IPv6-Unterstützung aktiv“ **raus** →
+   *Übernehmen*. Das Internet ist kurz weg.
 
-   Fällt Unraid aus, nutzt die FritzBox den alternativen Server. Das Internet läuft dann weiter,
-   nur die Umleitung fehlt. Die FritzBox fragt allerdings mitunter auch den alternativen Server.
-   Dann landet das Gerät beim echten Server und meldet kein Gas-Update. In dem Fall einfach noch
-   einmal prüfen lassen (Schritt 4).
-2. *Heimnetz → Netzwerk → Netzwerkeinstellungen*, darunter „weitere Einstellungen“, Bereich
-   **DNS-Rebind-Schutz**:
-   - Als Ausnahme `api.wlanthermo.de` eintragen
-   - *Übernehmen*
-
-   Ohne die Ausnahme verwirft die FritzBox die Antwort mit der lokalen Adresse.
+   Warum: Mit aktivem IPv6 fragt die FritzBox auch die IPv6-DNS-Server des Anbieters und liefert
+   dann die echte Adresse, `wlt-dns` wird übergangen. Das Abschalten leert außerdem ihren
+   DNS-Speicher. Nur für die paar Minuten des Updates.
+3. *Heimnetz → Netzwerk → Netzwerkeinstellungen*, darunter „weitere Einstellungen“, Bereich
+   **DNS-Rebind-Schutz**: als Ausnahme `api.wlanthermo.de` eintragen → *Übernehmen*.
+   Ohne die Ausnahme kann die FritzBox die Antwort mit der lokalen Adresse verwerfen.
 
 ## 3. Umleitung prüfen
 
-Von einem PC im Heimnetz. Der PC muss die FritzBox als DNS nutzen, ggf. vorher den DNS-Cache leeren.
+Von einem Windows-PC im Heimnetz (Eingabeaufforderung). `nslookup` fragt den angegebenen Server
+direkt, ein Leeren des DNS-Caches ist nicht nötig.
+
+1. `wlt-dns` selbst:
 
 ```bash
-nslookup api.wlanthermo.de
+nslookup api.wlanthermo.de 192.168.178.251
 ```
 
-Die Antwort muss `192.168.178.250` sein. Danach eine Update-Anfrage so senden, wie das Gerät es tut:
+2. Die FritzBox über IPv4, also genau so, wie der WLANThermo fragt:
 
 ```bash
-curl -X POST http://api.wlanthermo.de/ -H 'Content-Type: application/json' -d '{"device":{"device":"nano","serial":"test","hw_version":"v3","sw_version":"v1.2.4"},"update":{"prerelease":false},"url":{}}'
+nslookup api.wlanthermo.de 192.168.178.1
 ```
 
-Erwartet wird:
+Beide Male muss `192.168.178.250` herauskommen. Die zusätzliche Zeile `::` ist gewollt (leere
+IPv6-Antwort), `Server: UnKnown` ebenfalls harmlos. Kommt beim zweiten Test `85.214.113.210`
+(der echte Server), ist IPv6 noch an oder die FritzBox hat die alte Antwort noch im Speicher:
+Schritt 2 prüfen, 1 min warten, erneut testen.
 
-```json
-{"update":{"available":true,"version":"v1.2.4-gas.1","firmware":{"url":"http://192.168.178.250/fw/nanoV3-v1.2.4-gas.1.bin"}}}
-```
+Ein `nslookup` ohne Serverangabe ist kein guter Test: Windows fragt die FritzBox dann oft über
+IPv6, das Ergebnis sagt über den WLANThermo (nur IPv4) wenig.
 
 ## 4. Update aufs Gerät
 
 1. Pitmaster **aus**, Gas zu.
 2. WLANThermo neu starten (Stecker ziehen). Das leert seinen DNS-Cache.
 3. Die WebUI zeigt jetzt „Update verfügbar“ → installieren. Alternativ im Browser
-   `http://<wlanthermo-ip>/update` öffnen und `v1.2.4-gas.1` eingeben.
-4. Etwa 1–2 Minuten warten, das Gerät startet neu. Unter *System* steht dann `v1.2.4-gas.1`.
-5. Im Log von `wlt-update` (`docker logs wlt-update`) siehst du die Anfrage und den Download.
+   `http://<wlanthermo-ip>/update` öffnen und die neueste Gas-Version (z. B. `v1.2.4-gas.2`) eingeben.
+4. Etwa 1–2 Minuten warten, das Gerät startet neu. Nicht vom Strom trennen. Unter *System*
+   steht dann die neue Version.
+5. Im Log von `wlt-update` (Unraid → Docker → `wlt-update` → *Logs*) siehst du die Anfrage
+   (`offer v1.2.4-gas.…`) und den Download (`/fw/nanoV3-…bin`).
 
 ## 5. Nach dem Erst-Update
 
 1. **Web-Passwort setzen:** `http://<wlanthermo-ip>/setadmin` (Benutzer `admin`). Ohne Passwort
    ist kein Firmware-Upload möglich.
-2. **FritzBox zurückstellen:** *Internet → Zugangsdaten → DNS-Server* → „DNS-Server des
-   Internetanbieters verwenden“. Die Rebind-Ausnahme kann bleiben oder raus.
+2. **FritzBox zurückstellen:** *Internet → Zugangsdaten → Reiter IPv6* → „IPv6-Unterstützung
+   aktiv“ wieder anhaken. Dann *DNS-Server* → „DNS-Server des Internetanbieters verwenden“.
+   Die Rebind-Ausnahme kann bleiben oder raus.
 3. `wlt-dns` stoppen:
 
    ```bash
