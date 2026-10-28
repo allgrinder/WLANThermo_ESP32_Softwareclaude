@@ -208,6 +208,7 @@ void API::pitAry(JsonArray &jAry, int cc, bool extended)
       if (extended)
       {
         ma["flameOut"] = (boolean)pm->isFlameOut();
+        ma["lid"] = (boolean)pm->getOPLStatus();
         JsonObject &_at = ma.createNestedObject("autotune");
         autotuneObj(_at, pm);
       }
