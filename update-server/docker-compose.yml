@@ -4,8 +4,9 @@
 # Settings in .env (copy .env.example). See docs/INSTALL-GAS.md.
 services:
   wlt-update:
+    # prebuilt by .github/workflows/containers.yml; local build: docker compose build
+    image: ghcr.io/allgrinder/wlt-update:latest
     build: ./wlt-update
-    image: wlt-update:local
     container_name: wlt-update
     restart: unless-stopped
     networks:
@@ -39,8 +40,9 @@ services:
       - ALL
 
   wlt-dns:
+    # only needed for the first update (DNS override), see docs/INSTALL-GAS.md
+    image: ghcr.io/allgrinder/wlt-dns:latest
     build: ./wlt-dns
-    image: wlt-dns:local
     container_name: wlt-dns
     restart: unless-stopped
     networks:
