@@ -43,6 +43,11 @@
 
 #define STANDBY_SLEEP_CYCLE_TIME 500000u // 500ms
 
+// "Gas Servo" start values, determined with the simulator (test/sim)
+#define GAS_KP 3.0
+#define GAS_KI 0.008
+#define GAS_KD 60.0
+
 enum ledcChannels
 {
   // Channel 0, Timer0
@@ -130,6 +135,9 @@ void SystemNanoVx::init()
   profile[pitmasterProfileCount++] = new PitmasterProfile{"BLOWER50", 1, 1, 7.0, 0.01, 200, 25, 100, 80, 25, 75, 0, 1};
   profile[pitmasterProfileCount++] = new PitmasterProfile{"Servo MG995", 2, 2, 104, 0.2, 0, 0, 100, 100, 25, 75};
   profile[pitmasterProfileCount++] = new PitmasterProfile{"Custom", 3, 3, 7.0, 0.2, 0, 0, 100, 100, 0, 100};
+  // gas smoker with servo on the gas valve (gas fork), start values from test/sim
+  //                                                      Name,  Nr, Aktor, Kp,  Ki,    Kd,   DCmin, DCmax, JP, SPMIN, SPMAX, LINK, OPL, TUNE, MINOUT, ATD,  ATH, ATRULE, FO, FODROP, FOWIN
+  profile[pitmasterProfileCount++] = new PitmasterProfile{"Gas Servo", 4, 2, GAS_KP, GAS_KI, GAS_KD, 0, 100, 100, 0, 100, 0, 1, 0, 0, 20, 1.5, 0, 1, 15, 300};
 
   // Add Damper support
   damperSupport = true;

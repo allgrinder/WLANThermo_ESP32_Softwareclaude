@@ -22,6 +22,9 @@
 #include "Arduino.h"
 #include "temperature/TemperatureBase.h"
 #include "MedianFilterLib.h"
+#include "PidCore.h"
+#include "AutoTuneRelay.h"
+#include "FlameOutDetector.h"
 
 #define SERVOPULSMIN 550u
 #define SERVOPULSMAX 2250u
@@ -42,6 +45,14 @@ typedef struct TPitmasterProfile
   byte link;   // Link between Actuators
   byte opl;
   byte autotune;
+  // gas fork extensions, appended so that existing initializers stay valid
+  float minOutput;   // minimum output in % for PID, autotune and open lid (0..100)
+  float atD;         // autotune relay amplitude in % (0 = default 20)
+  float atH;         // autotune relay hysteresis in °C (0 = default 1.5)
+  uint8_t atRule;    // autotune tuning rule (AtRule)
+  uint8_t flameOut;  // flame out detection enabled
+  float foDrop;      // flame out: temperature drop in °C (0 = default 15)
+  uint16_t foWindow; // flame out: time window in s (0 = default 300)
 } PitmasterProfile;
 
 typedef struct TDutyCycleTest
@@ -52,22 +63,6 @@ typedef struct TDutyCycleTest
   uint8_t actuator;    // WHICH ACTOR
   int8_t saved;        // PITMASTER ACTIVITY CACHE (-1 .. 100)
 } DutyCycleTest;
-
-// AUTOTUNE
-struct AutoTune
-{
-  uint32_t set;          // BETRIEBS-TEMPERATUR
-  unsigned long time[3]; // TIME VECTOR
-  float temp[3];         // TEMPERATURE VECTOR
-  float value;           // CURRENT AUTOTUNE VALUE
-  byte run;              // WAIT FOR AUTOTUNE START: 0:off, 1:init, 2:run
-  byte stop;             // STOP AUTOTUNE: 1: normal, 2: overtemp, 3: timeout
-  float Kp;
-  float Ki;
-  float Kd;
-  float vmax;
-  uint8_t max; // MAXIMAL AUTOTUNE PITMASTER VALUE
-};
 
 typedef struct TOpenLid
 {
@@ -98,6 +93,15 @@ enum PitMasterActuator
 
 #define PITMASTER_NO_SUPPLY_IO 0xFFu
 
+// pitmaster events, collected by PitmasterGrp
+#define PM_EVENT_SAVE 0x01u        // configuration changed, save required
+#define PM_EVENT_AT_FINISHED 0x02u // autotune finished successfully
+#define PM_EVENT_AT_ABORTED 0x04u  // autotune aborted
+#define PM_EVENT_FLAMEOUT 0x08u    // flame out detected
+
+// time to wait for the servo to reach the park position before detaching
+#define SERVO_PARK_TIME_MS 1500u
+
 class Pitmaster
 {
 public:
@@ -119,17 +123,30 @@ public:
   void setServoMaxDutyCyle(uint16_t dutyCycle);
   uint16_t getServoMaxDutyCyle() { return this->servoDcMax; }
   void setDCount(uint8_t dutyCycle);
-  uint8_t getDCount() { return this->dCount; }
+  uint8_t getDCount() { return this->pid.getDCount(); }
   boolean getOPLStatus();
   float getOPLTemperature();
   uint8_t getGlobalIndex() { return this->globalIndex; };
   bool startDutyCycleTest(uint8_t actuator, uint8_t value);
   bool startAutoTune();
+  void stopAutoTune(AtError reason = AtError::UserStop);
+  AutoTuneRelay *getAutoTune() { return this->autoTune; }
+  void markAutoTuneRestartAbort();
   float pidCalc();
   void pidReset();
+  PidCore *getPid() { return &this->pid; }
   void disableActuators(boolean allowdelay);
+  void serviceSafePark();
+  boolean isParking() { return this->parkPending; }
+  boolean isActuatorAttached() { return this->initActuator != NOAR; }
   boolean isDutyCycleTestRunning();
   boolean isAutoTuneRunning();
+  boolean isFlameOut() { return this->flameOutDetector.isTriggered(); }
+  boolean isFlameOutSuspected() { return this->flameOutDetector.isSuspected(); }
+  void acknowledgeFlameOut();
+  float getMinOutput();
+  float getFilteredTemperature() { return this->filteredTemp; }
+  uint8_t takeEvents();
   void registerCallback(PitmasterCallback_t callback, void *userData);
   void unregisterCallback();
   void handleCallbacks();
@@ -142,6 +159,12 @@ private:
   boolean checkDutyCycleTest();
   boolean checkAutoTune();
   boolean checkOpenLid();
+  float filterTemperature();
+  float pidCalcFiltered(float x, bool jumpEnabled);
+  void abortAutoTune(AtError reason);
+  void startServoPark();
+  void detachActuators();
+  void updateFlameOut();
   void controlActuators();
   void initActuators();
   void controlFan(float newValue, float newDcMin, float newDcMax);
@@ -153,7 +176,9 @@ private:
   PitmasterProfile *profile;
   TemperatureBase *temperature;
   DutyCycleTest *dutyCycleTest;
-  AutoTune *autoTune;
+  AutoTuneRelay *autoTune;
+  FlameOutDetector flameOutDetector;
+  PidCore pid;
   OpenLid openLid;
   float targetTemperature;
   uint8_t ioPin1;
@@ -176,14 +201,11 @@ private:
 
   float value;
 
-  float esum;   // PITMASTER I-PART DIFFERENZ SUM
-  float elast;  // PITMASTER D-PART DIFFERENZ LAST
-  float Ki_alt; // PITMASTER I-PART CACHE
-  uint8_t ecount;
-  uint8_t dCount;
-  float edif;
-  bool jump;
-  uint8_t ampch;  // Amplitudenwechsel
+  float filteredTemp;
+  boolean medianPrimed;
+  boolean parkPending;
+  uint32_t parkUntil;
+  uint8_t events;
 
   uint16_t pause;
   uint previousMillis;

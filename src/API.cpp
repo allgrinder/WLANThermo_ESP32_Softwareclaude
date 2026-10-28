@@ -133,7 +133,37 @@ void API::pitTyp(JsonObject &jObj)
 
 // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 // Pitmaster JSON Array
-void API::pitAry(JsonArray &jAry, int cc)
+void API::autotuneObj(JsonObject &jObj, Pitmaster *pm)
+{
+  AutoTuneRelay *at = pm->getAutoTune();
+
+  if (NULL == at)
+  {
+    jObj["state"] = (uint8_t)AtState::Idle;
+    jObj["phase"] = (uint8_t)AtPhase::None;
+    jObj["error"] = (uint8_t)AtError::None;
+    return;
+  }
+
+  jObj["state"] = (uint8_t)at->getState();
+  jObj["phase"] = (uint8_t)at->getPhase();
+  jObj["cycle"] = at->getCycle();
+  jObj["cycles"] = at->getMaxCycles();
+  jObj["set"] = double_with_n_digits(at->getSetpoint(), 1);
+  jObj["bias"] = double_with_n_digits(at->getBias(), 1);
+  jObj["Tu"] = double_with_n_digits(at->getTu(), 1);
+  jObj["a"] = double_with_n_digits(at->getA(), 2);
+  jObj["Ku"] = double_with_n_digits(at->getKu(), 3);
+  jObj["kp"] = double_with_n_digits(at->getKp(), 3);
+  jObj["ki"] = double_with_n_digits(at->getKi(), 5);
+  jObj["kd"] = double_with_n_digits(at->getKd(), 2);
+  jObj["error"] = (uint8_t)at->getError();
+  jObj["warn"] = at->getWarnings();
+  if (at->isRunning())
+    jObj["elapsed"] = at->getElapsedS(millis());
+}
+
+void API::pitAry(JsonArray &jAry, int cc, bool extended)
 {
 
   String sc[2] = {"#ff0000", "#FE2EF7"};
@@ -173,6 +203,13 @@ void API::pitAry(JsonArray &jAry, int cc)
       }
       ma["set_color"] = sc[i];
       ma["value_color"] = vc[i];
+
+      if (extended)
+      {
+        ma["flameOut"] = (boolean)pm->isFlameOut();
+        JsonObject &_at = ma.createNestedObject("autotune");
+        autotuneObj(_at, pm);
+      }
     }
   }
 }
@@ -189,9 +226,9 @@ void API::pidAry(JsonArray &jAry, int cc)
     _pid["name"] = profile->name;
     _pid["id"] = profile->id;
     _pid["aktor"] = profile->actuator;
-    _pid["Kp"] = limit_float(profile->kp, -1);
-    _pid["Ki"] = limit_float(profile->ki, -1);
-    _pid["Kd"] = limit_float(profile->kd, -1);
+    _pid["Kp"] = double_with_n_digits(profile->kp, 2);
+    _pid["Ki"] = double_with_n_digits(profile->ki, 5);
+    _pid["Kd"] = double_with_n_digits(profile->kd, 2);
     _pid["DCmmin"] = profile->dcmin;
     _pid["DCmmax"] = profile->dcmax;
     _pid["opl"] = profile->opl;
@@ -200,6 +237,14 @@ void API::pidAry(JsonArray &jAry, int cc)
     _pid["link"] = profile->link;
     _pid["tune"] = profile->autotune; // noch nicht im EE gespeichert
     _pid["jp"] = profile->jumppw;
+    // gas fork extensions
+    _pid["minOut"] = profile->minOutput;
+    _pid["atD"] = (profile->atD > 0.0f) ? profile->atD : 20.0f;
+    _pid["atH"] = (profile->atH > 0.0f) ? profile->atH : 1.5f;
+    _pid["atRule"] = profile->atRule;
+    _pid["foOn"] = (boolean)profile->flameOut;
+    _pid["foDrop"] = (profile->foDrop > 0.0f) ? profile->foDrop : 15.0f;
+    _pid["foWin"] = (profile->foWindow > 0u) ? profile->foWindow : 300u;
   }
 }
 
@@ -263,6 +308,23 @@ void API::notificationObj(JsonObject &jObj)
       memcpy(&pushApp, notificationData.testConfig, sizeof(PushAppType));
       pushApp.enabled = true;
       break;
+    }
+  }
+  // Flame out: sent as lower limit alarm of the pitmaster channel with the
+  // setpoint as limit, so that the official server can render it. The extra
+  // "reason" field is ignored by servers that do not know it.
+  else if (NotificationType::FlameOut == notificationData.type)
+  {
+    _message["type"] = (uint32_t)NotificationType::LowerLimit;
+    _message["channel"] = (uint32_t)notificationData.channel;
+    _message["unit"] = String((char)gSystem->temperatures.getUnit());
+    _message["reason"] = "flameout";
+    TemperatureBase *temperature = gSystem->temperatures[notificationData.channel];
+
+    if (temperature)
+    {
+      _message["temp"] = (int)temperature->getValue();
+      _message["limit"] = notificationData.flameOutLimit;
     }
   }
   // Add channel for temperature alarms
@@ -388,7 +450,7 @@ void API::dataObj(JsonObject &jObj, bool cloud)
     JsonObject &_master = jObj.createNestedObject("pitmaster");
     pitTyp(_master);
     JsonArray &_pit = _master.createNestedArray("pm");
-    pitAry(_pit, gSystem->pitmasters.count());
+    pitAry(_pit, gSystem->pitmasters.count(), true);
   }
 }
 

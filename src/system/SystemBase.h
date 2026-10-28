@@ -36,7 +36,7 @@
 #include "Item.h"
 
 #define MAX_PITMASTERS 2u
-#define MAX_PITMASTERPROFILES 4u
+#define MAX_PITMASTERPROFILES 5u
 
 class SystemBase
 {

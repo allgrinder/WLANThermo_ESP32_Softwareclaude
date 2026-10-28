@@ -62,6 +62,10 @@ void OtaUpdate::task(void *parameter)
   if (success)
     success = otaUpdate->doDisplayUpdate();
 
+  // gas safety: bring servos to minOutput before the PWM stops
+  gSystem->pitmasters.parkAll();
+  delay(SERVO_PARK_TIME_MS);
+
   if (success)
   {
     Serial.println("OTA update finished.");

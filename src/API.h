@@ -32,7 +32,8 @@ public:
   static void systemObj(JsonObject &jObj, bool settings = false);
   static void channelAry(JsonArray &jAry, int cc);
   static void pitTyp(JsonObject &jObj);
-  static void pitAry(JsonArray &jAry, int cc);
+  static void pitAry(JsonArray &jAry, int cc, bool extended = false);
+  static void autotuneObj(JsonObject &jObj, class Pitmaster *pm);
   static void pidAry(JsonArray &jAry, int cc);
   static void iotObj(JsonObject &jObj);
   static void extObj(JsonObject &jObj);

@@ -165,6 +165,12 @@ void SystemBase::update()
       }
     }
 
+    // flame out alarm of a pitmaster, active until acknowledged
+    if (pitmasters.isFlameOutAlarm())
+    {
+      buzzerAlarm = true;
+    }
+
     if (buzzer != NULL)
     {
       if (buzzerAlarm)
@@ -250,6 +256,10 @@ boolean SystemBase::isInitDone()
 
 void SystemBase::restart()
 {
+  // gas safety: bring servos to minOutput before the PWM stops
+  pitmasters.parkAll();
+  delay(SERVO_PARK_TIME_MS);
+
   WiFi.disconnect();
   delay(500);
   yield();

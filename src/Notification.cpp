@@ -47,6 +47,16 @@ void Notification::loadDefaultValues()
 
   pushPushover.retry = PUSHOVER_RETRY_DEFAULT;
   pushPushover.expire = PUSHOVER_EXPIRE_DEFAULT;
+  flameOutPending = false;
+  flameOutChannel = 0u;
+  flameOutSetpoint = 0;
+}
+
+void Notification::notifyFlameOut(uint8_t channel, float setpoint)
+{
+  this->flameOutChannel = channel;
+  this->flameOutSetpoint = (int32_t)setpoint;
+  this->flameOutPending = true;
 }
 
 void Notification::check(TemperatureBase *temperature)
@@ -166,6 +176,22 @@ void Notification::sendTestMessage(NotificationService service, void *config)
 
 void Notification::update()
 {
+  if (this->flameOutPending)
+  {
+    if (this->pushTelegram.enabled || this->pushPushover.enabled || this->pushApp.enabled)
+    {
+      NotificationType savedType = this->notificationData.type;
+      uint8_t savedChannel = this->notificationData.channel;
+      this->notificationData.type = NotificationType::FlameOut;
+      this->notificationData.channel = this->flameOutChannel;
+      this->notificationData.flameOutLimit = this->flameOutSetpoint;
+      Cloud::sendAPI(APINOTIFICATION, NOTELINK);
+      this->notificationData.type = savedType;
+      this->notificationData.channel = savedChannel;
+    }
+    this->flameOutPending = false;
+  }
+
   if (this->notificationData.index > 0u)
   { // CHANNEL NOTIFICATION
 
