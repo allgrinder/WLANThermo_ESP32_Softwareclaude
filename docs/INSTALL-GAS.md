@@ -159,6 +159,11 @@ Erwartet wird:
 7. Danach stehen Kp/Ki/Kd im Profil und der Pitmaster regelt weiter. Bei jedem Abbruch
    (Übertemperatur, Fühler weg, Stopp) fährt der Servo auf den Mindestausgang und der Pitmaster
    geht aus.
+8. **Den Autotune machst du einmal**, nicht bei jedem Grillabend. Wiederholen nur nach einer
+   Änderung an Servo, Gestänge oder Gasregler. Mit „Intelligente Regelung“ (im Gas-Profil an)
+   lernt das Gerät danach bei jedem Grillabend selbst, welche Öffnung es für welche Temperatur
+   braucht. Die Anzahl gelernter Punkte steht auf der Pitmaster-Seite. Details und Messwerte:
+   [smart-control.md](smart-control.md).
 
 **Flamme aus?** Die WebUI zeigt ein rotes Banner, der Buzzer piept und es kommt eine Push-Nachricht.
 Der Push erscheint als „Unterschreitung“ des Pitmaster-Kanals mit dem Sollwert als Grenze. Der
