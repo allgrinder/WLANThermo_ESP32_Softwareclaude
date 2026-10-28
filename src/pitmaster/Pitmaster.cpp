@@ -93,6 +93,11 @@ Pitmaster::Pitmaster(uint8_t ioPin1, uint8_t channel1, uint8_t ioPin2, uint8_t c
     this->filteredTemp = 0;
     this->medianPrimed = false;
     this->bootPark = true;
+    this->ffPending = true;
+    this->lidWasOpen = false;
+    this->steadySinceMs = 0u;
+    this->steadySetpoint = 0;
+    this->lastMapSaveMs = 0u;
     this->parkPending = false;
     this->parkUntil = 0u;
     this->events = 0u;
@@ -121,6 +126,9 @@ void Pitmaster::setType(PitmasterType type)
     {
         this->typeLast  = type;
     }
+
+    if ((pm_auto == type) && (pm_auto != this->type))
+        this->ffPending = true;
 
     this->type = type;
     settingsChanged = true;
@@ -152,6 +160,7 @@ void Pitmaster::assignProfile(PitmasterProfile *profile)
 
         this->pidReset();
         this->profile = profile;
+        this->ffPending = true;
         settingsChanged = true;
     }
 }
@@ -197,6 +206,9 @@ void Pitmaster::setTargetTemperature(float temperature)
 {
     if (this->isAutoTuneRunning() && (fabs(temperature - this->autoTune->getSetpoint()) > 0.05f))
         this->abortAutoTune(AtError::SetpointChange);
+
+    if (fabs(temperature - this->targetTemperature) > 0.05f)
+        this->ffPending = true;
 
     this->targetTemperature = temperature;
     settingsChanged = true;
@@ -413,6 +425,7 @@ void Pitmaster::acknowledgeFlameOut()
     {
         this->flameOutDetector.acknowledge();
         this->pid.reset();
+        this->ffPending = true;
         this->settingsChanged = true;
         Log.notice("Flame out acknowledged" CR);
     }
@@ -505,6 +518,11 @@ boolean Pitmaster::checkAutoTune()
         this->pid.reset();
         this->pid.preloadIntegral(this->autoTune->getOutputMean(), this->profile->ki);
         this->flameOutDetector.setBias(this->autoTune->getOutputMean());
+        // a new autotune usually follows a mechanical change: start the
+        // learned output table again, the autotune gives its first point
+        this->biasMap.clear();
+        this->biasMap.setProfileId(this->profile->id);
+        this->biasMap.seed(this->autoTune->getSetpoint(), this->autoTune->getOutputMean());
         this->type = pm_auto;
         this->settingsChanged = true;
         this->events |= PM_EVENT_SAVE | PM_EVENT_AT_FINISHED;
@@ -678,10 +696,21 @@ void Pitmaster::update()
         }
         else if (false == this->openLid.detected)
         {
+            // lid closed again: restart from the learned output
+            if (this->lidWasOpen)
+                this->ffPending = true;
+            this->lidWasOpen = false;
+
+            if (this->isSmart() && this->ffPending)
+                this->applyFeedforward();
             this->value = max(this->pidCalc(), this->getMinOutput());
+            if (this->isSmart())
+                this->learnBias();
         }
         else
         {
+            this->lidWasOpen = true;
+            this->steadySinceMs = 0u;
             this->value = this->getMinOutput();
         }
         this->updateFlameOut();
@@ -1018,8 +1047,79 @@ float Pitmaster::pidCalcFiltered(float x, bool jumpEnabled)
         jpthres = JP_THRESHOLD_FAHRENHEIT;
     }
 
+    if (jumpEnabled && this->isSmart())
+    {
+        return this->pid.calcSmart(x, this->targetTemperature, this->profile->kp, this->profile->ki, this->profile->kd,
+                                   this->pause, this->getMinOutput());
+    }
+
     return this->pid.calc(x, this->targetTemperature, this->profile->kp, this->profile->ki, this->profile->kd,
                           (SSR == this->profile->actuator), jpthres, this->pause, jumpEnabled);
+}
+
+// smart control: start the integral at the learned steady output for the
+// setpoint (feedforward), the PID only corrects the rest
+void Pitmaster::applyFeedforward()
+{
+    this->ffPending = false;
+
+    if (this->biasMap.getProfileId() != this->profile->id)
+    {
+        this->biasMap.clear();
+        this->biasMap.setProfileId(this->profile->id);
+    }
+
+    float estimate;
+    if (this->biasMap.estimate(this->targetTemperature, estimate))
+    {
+        estimate = max(estimate, this->getMinOutput());
+        this->pid.preloadIntegral(estimate, this->profile->ki);
+        this->flameOutDetector.setBias(estimate);
+        Log.notice("Feedforward: %F %% for %F" CR, estimate, this->targetTemperature);
+    }
+}
+
+// learn the steady output while the temperature is held at the setpoint
+#define SMART_STEADY_BAND 1.5f
+#define SMART_STEADY_MS (300u * 1000u)
+#define SMART_MAP_SAVE_MS (30u * 60u * 1000u)
+
+void Pitmaster::learnBias()
+{
+    uint32_t now = millis();
+    float e = this->filteredTemp - this->targetTemperature;
+
+    if ((fabs(e) > SMART_STEADY_BAND) || (fabs(this->steadySetpoint - this->targetTemperature) > 0.05f) ||
+        this->flameOutDetector.isSuspected())
+    {
+        this->steadySinceMs = 0u;
+        this->steadySetpoint = this->targetTemperature;
+        return;
+    }
+
+    if (0u == this->steadySinceMs)
+    {
+        this->steadySinceMs = (0u == now) ? 1u : now;
+        return;
+    }
+
+    if ((now - this->steadySinceMs) < SMART_STEADY_MS)
+        return;
+
+    if (this->biasMap.getProfileId() != this->profile->id)
+    {
+        this->biasMap.clear();
+        this->biasMap.setProfileId(this->profile->id);
+    }
+
+    // the output that holds the setpoint is the integral part
+    boolean newBin = this->biasMap.learn(this->targetTemperature, this->pid.getI());
+
+    if (newBin || ((now - this->lastMapSaveMs) >= SMART_MAP_SAVE_MS))
+    {
+        this->lastMapSaveMs = now;
+        this->events |= PM_EVENT_SAVE;
+    }
 }
 
 float Pitmaster::pidCalc()

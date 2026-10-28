@@ -20,6 +20,7 @@
 
 ****************************************************/
 #include "PidCore.h"
+#include <math.h>
 
 #define PIDKIMAX 95 // ANTI WINDUP LIMIT MAX
 #define PIDKIMIN 0  // ANTI WINDUP LIMIT MIN
@@ -27,6 +28,9 @@
 #define PITMAX 100  // UPPER LIMIT SET
 
 #define PID_DEFAULT_DCOUNT 15u
+#define SMART_I_ZONE 3.0f // °C, integration zone of the smart control
+#define SMART_STALL_SLOPE 0.015f // °C/s, below for SMART_STALL_S: temperature stalls,
+#define SMART_STALL_S 180.0f     // integrate also outside the zone (P alone too weak)
 
 #define JP_THRESHOLD_RANGE 25u
 #define JP_THRESHOLD_RANGE_OUT 1000u
@@ -49,6 +53,8 @@ void PidCore::reset()
     this->Ki_alt = 0;
     this->jump = 0;
     this->ampch = 0;
+    this->xlastValid = false;
+    this->stallS = 0;
 }
 
 void PidCore::preloadIntegral(float iOut, float ki)
@@ -62,6 +68,88 @@ void PidCore::preloadIntegral(float iOut, float ki)
         this->Ki_alt = ki;
         this->esum = iOut / ki;
     }
+}
+
+float PidCore::calcSmart(float x, float w, float kp, float ki, float kd, float dtMs, float outMin)
+{
+    int32_t diff = (w - x) * 10;
+    float e = diff / 10.0; // nur Temperaturunterschiede von >0.1°C beachten
+    float dt = dtMs / 1000.0;
+
+    this->clearJump();
+
+    // Proportional-Anteil
+    float p_out = kp * e;
+
+    // Differential-Anteil auf die Messung (Steigung über dCount Zyklen)
+    if (false == this->xlastValid)
+    {
+        this->xlast = x;
+        this->xlastValid = true;
+        this->edif = 0;
+        this->ecount = 0u;
+    }
+    this->ecount++;
+    if (this->ecount >= this->dCount)
+    {
+        this->edif = -(x - this->xlast) / (dt * (float)this->dCount);
+        this->xlast = x;
+        this->ecount = 0u;
+    }
+    float d_out = kd * this->edif;
+
+    // Integral-Anteil mit bedingter Integration
+    float i_out = 0;
+    if (ki != 0)
+    {
+        if (ki != this->Ki_alt)
+        {
+            this->esum = (this->esum * this->Ki_alt) / ki;
+            this->Ki_alt = ki;
+        }
+
+        float unsaturated = p_out + ki * this->esum + d_out;
+        bool saturatedHigh = (unsaturated >= PITMAX) && (e > 0);
+        bool saturatedLow = (unsaturated <= outMin) && (e < 0);
+        // far from the setpoint P and D do the work, the integral keeps the
+        // (learned) steady output and only corrects close to the setpoint,
+        // or when the temperature stalls outside the zone (P alone too weak)
+        bool insideZone = fabsf(e) <= SMART_I_ZONE;
+        if (fabsf(this->edif) < SMART_STALL_SLOPE)
+            this->stallS += dt;
+        else
+            this->stallS = 0;
+        bool stalled = this->stallS >= SMART_STALL_S;
+
+        if ((insideZone || stalled) && !saturatedHigh && !saturatedLow)
+        {
+            this->esum += e * dt;
+        }
+
+        if (this->esum * ki > PITMAX)
+            this->esum = PITMAX / ki;
+        else if (this->esum * ki < PITMIN)
+            this->esum = PITMIN / ki;
+
+        i_out = ki * this->esum;
+    }
+    else
+    {
+        this->esum = 0;
+        this->Ki_alt = 0;
+    }
+
+    this->pOut = p_out;
+    this->iOut = i_out;
+    this->dOut = d_out;
+
+    float y = p_out + i_out + d_out;
+    if (y < PITMIN)
+        y = PITMIN;
+    else if (y > PITMAX)
+        y = PITMAX;
+
+    return y;
 }
 
 void PidCore::setDCount(uint8_t dCount)

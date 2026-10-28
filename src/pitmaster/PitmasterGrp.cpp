@@ -146,6 +146,21 @@ void PitmasterGrp::loadConfig()
         if(_master[pitsize].asObject().containsKey("servoDcMax"))
           pm->setServoMaxDutyCyle(_master[pitsize]["servoDcMax"].as<uint16_t>());
 
+        // learned output table of the smart control
+        if (_master[pitsize].asObject().containsKey("bm"))
+        {
+          BiasMap *map = pm->getBiasMap();
+          map->clear();
+          map->setProfileId(_master[pitsize]["bmp"].as<uint8_t>());
+          JsonArray &_bm = _master[pitsize]["bm"];
+          for (uint8_t b = 0u; (b < _bm.size()) && (b < BIASMAP_BINS); b++)
+          {
+            int16_t v = _bm[b].as<int16_t>();
+            if (v >= 0)
+              map->setBin(b, v / 10.0f, BIASMAP_KNOWN_S);
+          }
+        }
+
         // restart during a running autotune: hold minOutput, see Pitmaster
         restartDuringAutotune[pitsize] = (_master[pitsize].asObject().containsKey("at") && _master[pitsize]["at"].as<uint8_t>());
       }
@@ -193,6 +208,8 @@ void PitmasterGrp::loadConfig()
           profile->foDrop = _p["fod"];
         if (_p.containsKey("fow"))
           profile->foWindow = _p["fow"];
+        if (_p.containsKey("sm"))
+          profile->smart = _p["sm"];
       }
 
       pidsize++;
@@ -230,6 +247,15 @@ void PitmasterGrp::saveConfig()
       _ma["servoDcMax"] = pm->getServoMaxDutyCyle();
       if (pm->isAutoTuneRunning())
         _ma["at"] = 1;
+
+      BiasMap *map = pm->getBiasMap();
+      if (map->knownCount() > 0u)
+      {
+        _ma["bmp"] = map->getProfileId();
+        JsonArray &_bm = _ma.createNestedArray("bm");
+        for (uint8_t b = 0u; b < BIASMAP_BINS; b++)
+          _bm.add(map->isKnown(b) ? (int16_t)(map->getValue(b) * 10.0f + 0.5f) : (int16_t)-1);
+      }
     }
   }
 
@@ -261,6 +287,7 @@ void PitmasterGrp::saveConfig()
       _pid["fo"] = profile->flameOut;
       _pid["fod"] = double_with_n_digits(profile->foDrop, 1);
       _pid["fow"] = profile->foWindow;
+      _pid["sm"] = profile->smart;
     }
   }
 

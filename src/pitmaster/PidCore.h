@@ -58,6 +58,15 @@ public:
   // bumpless start: preload the integral part with the given output in %
   void preloadIntegral(float iOut, float ki);
 
+  // "smart" variant for the gas profile (profile->smart):
+  //  - derivative on the measurement: no kick on setpoint changes, brakes a
+  //    fast rise instead
+  //  - integration only while the output is not saturated in the direction
+  //    of the error (at 100 % or at outMin): no windup during heat up, lid
+  //    open recovery or at the smallest stage
+  //  - integral range 0..100 %
+  float calcSmart(float x, float w, float kp, float ki, float kd, float dtMs, float outMin);
+
 private:
   float esum;   // PITMASTER I-PART DIFFERENZ SUM
   float elast;  // PITMASTER D-PART DIFFERENZ LAST
@@ -70,4 +79,7 @@ private:
   float pOut;
   float iOut;
   float dOut;
+  float xlast;
+  bool xlastValid;
+  float stallS; // seconds the temperature did not move (smart control)
 };

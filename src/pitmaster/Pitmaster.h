@@ -25,6 +25,7 @@
 #include "PidCore.h"
 #include "AutoTuneRelay.h"
 #include "FlameOutDetector.h"
+#include "BiasMap.h"
 
 #define SERVOPULSMIN 550u
 #define SERVOPULSMAX 2250u
@@ -53,6 +54,7 @@ typedef struct TPitmasterProfile
   uint8_t flameOut;  // flame out detection enabled
   float foDrop;      // flame out: temperature drop in °C (0 = default 15)
   uint16_t foWindow; // flame out: time window in s (0 = default 300)
+  uint8_t smart;     // smart control: anti windup, D on measurement, learned feedforward
 } PitmasterProfile;
 
 typedef struct TDutyCycleTest
@@ -147,6 +149,8 @@ public:
   float getMinOutput();
   float getFilteredTemperature() { return this->filteredTemp; }
   uint16_t getServoPulseUs();
+  BiasMap *getBiasMap() { return &this->biasMap; }
+  boolean isSmart() { return (NULL != this->profile) && (this->profile->smart > 0u); }
   uint8_t takeEvents();
   void registerCallback(PitmasterCallback_t callback, void *userData);
   void unregisterCallback();
@@ -166,6 +170,8 @@ private:
   void startServoPark();
   void detachActuators();
   void updateFlameOut();
+  void applyFeedforward();
+  void learnBias();
   void controlActuators();
   void initActuators();
   void controlFan(float newValue, float newDcMin, float newDcMax);
@@ -180,6 +186,12 @@ private:
   AutoTuneRelay *autoTune;
   FlameOutDetector flameOutDetector;
   PidCore pid;
+  BiasMap biasMap;
+  boolean ffPending;
+  boolean lidWasOpen;
+  uint32_t steadySinceMs;
+  float steadySetpoint;
+  uint32_t lastMapSaveMs;
   OpenLid openLid;
   float targetTemperature;
   uint8_t ioPin1;
