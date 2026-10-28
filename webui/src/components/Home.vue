@@ -1,6 +1,12 @@
 <template>
  <div class="pure-g">
     <template v-if="!editing">
+      <div class="pure-u-1-1" v-for="pm in flameOutPitmasters" :key="'fo' + pm.id">
+        <div class="flame-out-banner">
+          <span>{{ $t('foAlarm') }}</span>
+          <button type="button" class="pure-button" @click.stop="ackFlameOut(pm.id)">{{ $t('foAck') }}</button>
+        </div>
+      </div>
       <div class="pure-u-1 pure-u-md-1-2 pure-u-xl-1-4" v-for="(c, i) in transformedChannels" :key="i">
         <div @click="editChannel(c)" class="info-box cursor-pointer" v-bind:style="{borderColor: c.color}">
           <div class="title-row">
@@ -12,6 +18,9 @@
                 <!-- based on the value shows different rotate speeds -->
                 <span class="icon icon-fan" :class="'icon-rotate-' + Math.ceil(c.pm.value/25)*25"></span>
                 {{c.pm.value}}%
+                <template v-if="c.pm.autotune && c.pm.autotune.state == 1">
+                  · {{ $t('atTitle') }} {{ c.pm.autotune.phase == 2 ? (c.pm.autotune.cycle + '/' + c.pm.autotune.cycles) : '…' }}
+                </template>
               </template>
               <template v-else>
                 {{c.name}}
@@ -184,6 +193,9 @@ export default {
     };
   },
   computed: {
+    flameOutPitmasters: function () {
+      return (this.pitmasterpm || []).filter(pm => pm.flameOut)
+    },
     filteredSensors: function () {
       if (this.editingChanelClone.fixed) {
         return this.sensors;
@@ -220,6 +232,9 @@ export default {
       if (this.channels.some(c => c.temp != '999')) {
         this.transformedChannels = this.transformedChannels.filter(c => c.temp != '999')
       }
+    },
+    ackFlameOut: function(id) {
+      this.axios.post('/setautotune', { id: id, cmd: 'ackFlameOut' })
     },
     editChannel: function(channel) {
       this.editingChanelClone = Object.assign({}, channel)
@@ -297,6 +312,18 @@ export default {
 </script>
 
 <style lang="scss" scoped>
+.flame-out-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5em;
+  margin: 0.3em;
+  padding: 0.6em;
+  background-color: #c62828;
+  color: #fff;
+  font-weight: bold;
+  border-radius: 4px;
+}
 @import "../assets/colors.scss";
 
 .info-box {

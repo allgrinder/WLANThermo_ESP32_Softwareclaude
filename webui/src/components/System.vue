@@ -73,6 +73,9 @@
               {{$t("prerelease")}}
             </label>
           </div>
+          <div class="form-group">
+            <a href="/fwupload" target="_blank" rel="noopener">{{$t("fwUpload")}}</a>
+          </div>
           <div class="form-checkbox" v-if="systemSettings.hasOwnProperty('crashreport')">
             <label for="crashreport" class="pure-checkbox checkbox">
               <input v-model="systemSettings.crashreport" :true-value="'true'" :false-value="'false'" type="checkbox" id="crashreport" />

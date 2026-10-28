@@ -86,6 +86,35 @@
               </div>
             </form>
           </div>
+          <!-- flame out alarm -->
+          <div class="config-form flame-out" v-if="status[index] && status[index].flameOut">
+            <div class="flame-out-text">{{ $t('foAlarm') }}</div>
+            <button type="button" class="pure-button at-button" @click="ackFlameOut(index)">{{ $t('foAck') }}</button>
+          </div>
+          <!-- autotune -->
+          <div class="config-form" v-if="pm.typ.$model === 'auto' && status[index]">
+            <div class="at-row">
+              <span class="at-title">{{ $t('atTitle') }}</span>
+              <button v-if="!isAtRunning(index)" type="button" class="pure-button at-button" @click="startAutotune(index)">{{ $t('atStart') }}</button>
+              <button v-else type="button" class="pure-button at-button" @click="stopAutotune(index)">{{ $t('atStop') }}</button>
+            </div>
+            <div class="at-status" v-if="status[index].autotune">
+              <div>{{ atStateText(status[index].autotune) }}</div>
+              <div v-if="status[index].autotune.state == 1 && status[index].autotune.phase == 2">
+                {{ $t('atCycle') }} {{ status[index].autotune.cycle }}/{{ status[index].autotune.cycles }}
+                · Bias {{ status[index].autotune.bias }}%
+              </div>
+              <div v-if="status[index].autotune.state == 1">
+                {{ $t('atElapsed') }} {{ Math.floor((status[index].autotune.elapsed || 0) / 60) }} min
+              </div>
+              <div v-if="status[index].autotune.state == 2">
+                Tu {{ status[index].autotune.Tu }} s · a {{ status[index].autotune.a }} °C · Ku {{ status[index].autotune.Ku }}<br>
+                Kp {{ status[index].autotune.kp }} · Ki {{ status[index].autotune.ki }} · Kd {{ status[index].autotune.kd }}
+              </div>
+              <div v-if="status[index].autotune.warn" class="at-warn">{{ atWarnText(status[index].autotune.warn) }}</div>
+            </div>
+            <div class="at-hint">{{ $t('atHint') }}</div>
+          </div>
         </div>
       </div>
       <!-- profile form -->
@@ -198,7 +227,7 @@
               </div>
               <div class="pure-u-1-3 control">
                 <div class="form-group" :class="{ 'error': $v.editingProfile.Ki.$invalid}">
-                  <input type="number" min="0.0" max="5.0" step="0.01" v-model="editingProfile.Ki" required />
+                  <input type="number" min="0.0" max="5.0" step="any" v-model="editingProfile.Ki" required />
                   <label class="control-label" for="input">{{$t("pidKi")}}</label>
                   <i class="bar"></i>
                   <div class="error-prompt" v-if="$v.editingProfile.Ki.$invalid">
@@ -224,6 +253,14 @@
                   {{$t('v_must_between', {min: $v.editingProfile.jp.$params.between.min, max: $v.editingProfile.jp.$params.between.max})}}
                 </div>
               </div>
+              <div class="form-group control-at-top" :class="{ 'error': $v.editingProfile.minOut.$invalid}">
+                <input type="number" min="0" max="100" step="any" v-model="editingProfile.minOut" required/>
+                <label class="control-label" for="input">{{$t("pidMinOut")}}</label>
+                <i class="bar"></i>
+                <div class="error-prompt" v-if="$v.editingProfile.minOut.$invalid">
+                  {{$t('v_must_between', {min: $v.editingProfile.minOut.$params.between.min, max: $v.editingProfile.minOut.$params.between.max})}}
+                </div>
+              </div>
             </form>
           </div>
           <div class="form-section-name">
@@ -236,6 +273,52 @@
                   <input v-model="editingProfile.opl" :true-value="1" :false-value="0" type="checkbox" id="lid" />
                   {{$t("pitLid")}}
                 </label>
+              </div>
+              <div class="form-checkbox">
+                <label for="fo" class="pure-checkbox checkbox">
+                  <input v-model="editingProfile.foOn" type="checkbox" id="fo" />
+                  {{$t("foEnable")}}
+                </label>
+              </div>
+              <template v-if="editingProfile.foOn">
+                <div class="pure-u-1-2 control">
+                  <div class="form-group" :class="{ 'error': $v.editingProfile.foDrop.$invalid}">
+                    <input type="number" min="3" max="100" step="any" v-model="editingProfile.foDrop" required />
+                    <label class="control-label" for="input">{{$t("foDrop")}}</label>
+                    <i class="bar"></i>
+                  </div>
+                </div>
+                <div class="pure-u-1-2 control">
+                  <div class="form-group" :class="{ 'error': $v.editingProfile.foWin.$invalid}">
+                    <input type="number" min="60" max="600" v-model="editingProfile.foWin" required />
+                    <label class="control-label" for="input">{{$t("foWin")}}</label>
+                    <i class="bar"></i>
+                  </div>
+                </div>
+              </template>
+              <div class="at-section-title">{{$t("atTitle")}}</div>
+              <div class="pure-u-1-2 control">
+                <div class="form-group" :class="{ 'error': $v.editingProfile.atD.$invalid}">
+                  <input type="number" min="5" max="50" step="any" v-model="editingProfile.atD" required />
+                  <label class="control-label" for="input">{{$t("atD")}}</label>
+                  <i class="bar"></i>
+                </div>
+              </div>
+              <div class="pure-u-1-2 control">
+                <div class="form-group" :class="{ 'error': $v.editingProfile.atH.$invalid}">
+                  <input type="number" min="0.2" max="10" step="any" v-model="editingProfile.atH" required />
+                  <label class="control-label" for="input">{{$t("atH")}}</label>
+                  <i class="bar"></i>
+                </div>
+              </div>
+              <div class="form-group select-form-group">
+                <select v-model="editingProfile.atRule">
+                  <option :value="0">{{$t("atRuleTL")}}</option>
+                  <option :value="1">{{$t("atRuleZN")}}</option>
+                  <option :value="2">{{$t("atRuleTLPI")}}</option>
+                </select>
+                <label class="control-label" for="select">{{$t("atRule")}}</label>
+                <i class="bar"></i>
               </div>
             </form>
           </div>
@@ -259,6 +342,8 @@ export default {
         type: []
       },
       channels: [],
+      status: [],
+      statusTimer: null,
       profiles: [],
       actuators: [],
       isEditingProfile: false,
@@ -279,6 +364,13 @@ export default {
         name: '',
         opl: null,
         tune: null,
+        minOut: 0,
+        atD: 20,
+        atH: 1.5,
+        atRule: 0,
+        foOn: false,
+        foDrop: 15,
+        foWin: 300,
       },
     };
   },
@@ -325,6 +417,21 @@ export default {
       },
       DCmmin: {
         between: between(0, 100)
+      },
+      minOut: {
+        between: between(0, 100)
+      },
+      atD: {
+        between: between(5, 50)
+      },
+      atH: {
+        between: between(0.2, 10)
+      },
+      foDrop: {
+        between: between(3, 100)
+      },
+      foWin: {
+        between: between(60, 600)
       }
     }
   },
@@ -336,6 +443,7 @@ export default {
     ]).then(([dataResponse, settingsResponse])=> {
         const data = dataResponse.data
         this.pitmaster.pm = data.pitmaster.pm
+        this.status = data.pitmaster.pm.map(pm => ({ autotune: pm.autotune, flameOut: pm.flameOut }))
         this.pitmaster.type = data.pitmaster.type
         this.channels = data.channel.filter(c => c.typ != 16 && c.typ != 17)
 
@@ -345,8 +453,72 @@ export default {
 
         EventBus.$emit("loading", false)
       })
+    // autotune status and flame out alarm, without touching the form values
+    this.statusTimer = setInterval(this.refreshStatus, 3000)
+  },
+  beforeDestroy: function () {
+    if (this.statusTimer) {
+      clearInterval(this.statusTimer)
+    }
   },
   methods: {
+    refreshStatus: function () {
+      this.axios.get("/data").then((response) => {
+        this.status = response.data.pitmaster.pm.map(pm => ({ autotune: pm.autotune, flameOut: pm.flameOut }))
+      }).catch(() => {})
+    },
+    isAtRunning: function (index) {
+      const s = this.status[index]
+      return s && s.autotune && s.autotune.state == 1
+    },
+    startAutotune: function (index) {
+      const pm = this.pitmaster.pm[index]
+      if (!window.confirm(this.$t('atConfirm', { set: pm.set }))) {
+        return
+      }
+      EventBus.$emit("loading", true)
+      // save channel, profile and setpoint first, then start explicitly
+      this.axios.post('/setpitmaster', this.pitmaster.pm).then(() => {
+        return this.axios.post('/setautotune', { id: pm.id, cmd: 'start', set: parseFloat(pm.set) })
+      }).then(() => {
+        EventBus.$emit("loading", false)
+        this.refreshStatus()
+      }).catch(() => {
+        EventBus.$emit("loading", false)
+      })
+    },
+    stopAutotune: function (index) {
+      this.axios.post('/setautotune', { id: this.pitmaster.pm[index].id, cmd: 'stop' }).then(() => {
+        this.refreshStatus()
+      })
+    },
+    ackFlameOut: function (index) {
+      this.axios.post('/setautotune', { id: this.pitmaster.pm[index].id, cmd: 'ackFlameOut' }).then(() => {
+        this.refreshStatus()
+      })
+    },
+    atStateText: function (at) {
+      if (at.state == 1) {
+        return at.phase == 1 ? this.$t('atPhaseApproach') : this.$t('atPhaseRelay')
+      }
+      if (at.state == 2) {
+        return this.$t('atDone')
+      }
+      if (at.state == 3) {
+        return this.$t('atAborted') + ': ' + this.$t('atError' + at.error)
+      }
+      return this.$t('atIdle')
+    },
+    atWarnText: function (warn) {
+      const texts = []
+      if (warn & 1) {
+        texts.push(this.$t('atWarnBias'))
+      }
+      if (warn & 2) {
+        texts.push(this.$t('atWarnConv'))
+      }
+      return texts.join(' ')
+    },
     editProfile: function(profileId, pmType) {
       this.isEditingProfile = true
       this.editingPMType = pmType
@@ -408,5 +580,41 @@ export default {
 }
 .form-spacing {
   margin-bottom: 1.2em;
+}
+.at-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.at-title {
+  font-weight: bold;
+}
+.at-section-title {
+  color: #aaa;
+  font-size: 0.9em;
+  margin: 0.8em 0 1.8em 0;
+}
+.at-button {
+  margin: 0.3em 0;
+}
+.at-status {
+  margin-top: 0.5em;
+  line-height: 1.5em;
+}
+.at-warn {
+  color: #b35900;
+}
+.at-hint {
+  margin-top: 0.5em;
+  font-size: 0.85em;
+  opacity: 0.8;
+}
+.flame-out {
+  background-color: #c62828;
+  color: #fff;
+}
+.flame-out-text {
+  font-weight: bold;
+  margin-bottom: 0.4em;
 }
 </style>
