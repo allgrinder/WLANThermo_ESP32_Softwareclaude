@@ -217,5 +217,9 @@ export default {
 	foWin: "Time window [s]",
 	foAlarm: "FLAME OUT? Temperature falls although gas is open. Check the gas, relight if needed, then acknowledge.",
 	foAck: "Acknowledge",
+	smartEnable: "Smart control (learns your smoker)",
+	smartLearned: "Learned temperature points: {n}",
+	smartReset: "Reset learned values",
+	smartResetConfirm: "Discard learned values? Useful after changes to the servo or gas valve.",
 	fwUpload: "Upload firmware file (web password required)"
 };

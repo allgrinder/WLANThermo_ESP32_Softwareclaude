@@ -217,5 +217,9 @@ export default {
 	foWin: "Zeitfenster [s]",
 	foAlarm: "FLAMME AUS? Temperatur fällt trotz Gas. Gas prüfen, ggf. neu zünden, dann quittieren.",
 	foAck: "Quittieren",
+	smartEnable: "Intelligente Regelung (lernt deinen Smoker)",
+	smartLearned: "Gelernte Temperaturpunkte: {n}",
+	smartReset: "Gelerntes zurücksetzen",
+	smartResetConfirm: "Gelernte Werte verwerfen? Sinnvoll nach Umbau am Servo oder Gasregler.",
 	fwUpload: "Firmware-Datei hochladen (Web-Passwort nötig)"
 };

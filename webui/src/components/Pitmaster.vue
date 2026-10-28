@@ -114,6 +114,10 @@
               <div v-if="status[index].autotune.warn" class="at-warn">{{ atWarnText(status[index].autotune.warn) }}</div>
             </div>
             <div class="at-hint">{{ $t('atHint') }}</div>
+            <div class="at-row learned-row" v-if="status[index].learned !== undefined">
+              <span>{{ $t('smartLearned', { n: status[index].learned }) }}</span>
+              <button type="button" class="pure-button at-button" v-if="status[index].learned > 0" @click="resetLearned(index)">{{ $t('smartReset') }}</button>
+            </div>
           </div>
         </div>
       </div>
@@ -275,6 +279,12 @@
                 </label>
               </div>
               <div class="form-checkbox">
+                <label for="smart" class="pure-checkbox checkbox">
+                  <input v-model="editingProfile.smart" type="checkbox" id="smart" />
+                  {{$t("smartEnable")}}
+                </label>
+              </div>
+              <div class="form-checkbox">
                 <label for="fo" class="pure-checkbox checkbox">
                   <input v-model="editingProfile.foOn" type="checkbox" id="fo" />
                   {{$t("foEnable")}}
@@ -371,6 +381,7 @@ export default {
         foOn: false,
         foDrop: 15,
         foWin: 300,
+        smart: false,
       },
     };
   },
@@ -443,7 +454,7 @@ export default {
     ]).then(([dataResponse, settingsResponse])=> {
         const data = dataResponse.data
         this.pitmaster.pm = data.pitmaster.pm
-        this.status = data.pitmaster.pm.map(pm => ({ autotune: pm.autotune, flameOut: pm.flameOut }))
+        this.status = data.pitmaster.pm.map(pm => ({ autotune: pm.autotune, flameOut: pm.flameOut, learned: pm.learned }))
         this.pitmaster.type = data.pitmaster.type
         this.channels = data.channel.filter(c => c.typ != 16 && c.typ != 17)
 
@@ -464,7 +475,7 @@ export default {
   methods: {
     refreshStatus: function () {
       this.axios.get("/data").then((response) => {
-        this.status = response.data.pitmaster.pm.map(pm => ({ autotune: pm.autotune, flameOut: pm.flameOut }))
+        this.status = response.data.pitmaster.pm.map(pm => ({ autotune: pm.autotune, flameOut: pm.flameOut, learned: pm.learned }))
       }).catch(() => {})
     },
     isAtRunning: function (index) {
@@ -489,6 +500,14 @@ export default {
     },
     stopAutotune: function (index) {
       this.axios.post('/setautotune', { id: this.pitmaster.pm[index].id, cmd: 'stop' }).then(() => {
+        this.refreshStatus()
+      })
+    },
+    resetLearned: function (index) {
+      if (!window.confirm(this.$t('smartResetConfirm'))) {
+        return
+      }
+      this.axios.post('/setautotune', { id: this.pitmaster.pm[index].id, cmd: 'resetLearned' }).then(() => {
         this.refreshStatus()
       })
     },
@@ -603,6 +622,9 @@ export default {
 }
 .at-warn {
   color: #b35900;
+}
+.learned-row {
+  margin-top: 0.5em;
 }
 .at-hint {
   margin-top: 0.5em;
