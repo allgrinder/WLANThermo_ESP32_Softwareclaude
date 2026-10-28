@@ -2,9 +2,23 @@ name: Release
 # Gas fork: only nanoV3, tag schema v1.2.4-gas.N (must start with "v",
 # the device rejects other versions)
 on:
+  # tag push v*, or a push to a feature branch that changes RELEASE_VERSION:
+  # that commit is built and tag + release are created (an existing tag is
+  # never overwritten). RELEASE_VERSION is used because tag pushes are not
+  # possible from every client.
   push:
     tags:
       - 'v*'
+    branches:
+      - 'feature/**'
+    paths:
+      - 'RELEASE_VERSION'
+  # manual start (only possible when this file is on the default branch)
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version/tag, e.g. v1.2.4-gas.1'
+        required: true
 
 permissions:
   contents: write
@@ -33,7 +47,12 @@ jobs:
           pip install -U platformio
       - name: Get the version
         id: get_version
-        run: echo version=${GITHUB_REF#refs/tags/} >> $GITHUB_OUTPUT
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then V="${{ inputs.version }}"
+          elif [ "${GITHUB_REF#refs/tags/}" != "$GITHUB_REF" ]; then V="${GITHUB_REF#refs/tags/}"
+          else V="$(tr -d ' \r\n' < RELEASE_VERSION)"; fi
+          echo "$V" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-gas\.[0-9]+)?$' || { echo "invalid version $V"; exit 1; }
+          echo version=$V >> $GITHUB_OUTPUT
       - name: Build firmware
         run: |
           sed -i -e 's/\/\*REL_VER\*\//#define FIRMWAREVERSION  "${{ steps.get_version.outputs.version }}"/g' ./src/Version.h
@@ -49,6 +68,8 @@ jobs:
         with:
           name: firmware
           path: ./artifacts
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
 
   release:
     name: Create release
@@ -63,9 +84,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG=${GITHUB_REF#refs/tags/}
+          TAG="${{ needs.firmware.outputs.version }}"
           gh release create "$TAG" ./firmware/nanoV3.bin ./firmware/nanoV3.bin.sha256 \
-            --repo "$GITHUB_REPOSITORY" \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "WLANThermo Nano V3 Gas $TAG" \
             --notes "Gas fork release $TAG for WLANThermo Nano V3 (nanoV3.bin). See docs/INSTALL-GAS.md." \
             --prerelease
