@@ -1,0 +1,68 @@
+# WLANThermo gas fork: update server emulator + DNS override for Unraid.
+# Both containers get their own IP in the home network (Unraid custom network
+# br0 = macvlan), so port 80/53 do not collide with Unraid itself.
+# Settings in .env (copy .env.example). See docs/INSTALL-GAS.md.
+services:
+  wlt-update:
+    build: ./wlt-update
+    image: wlt-update:local
+    container_name: wlt-update
+    restart: unless-stopped
+    networks:
+      br0:
+        ipv4_address: ${WLT_UPDATE_IP}
+    # resolve the real api.wlanthermo.de via public DNS, never via the home DNS
+    dns:
+      - 1.1.1.1
+      - 9.9.9.9
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    environment:
+      PUBLIC_BASE_URL: http://${WLT_UPDATE_IP}
+      GITHUB_REPO: ${GITHUB_REPO:-allgrinder/WLANThermo_ESP32_Softwareclaude}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      POLL_INTERVAL_S: ${POLL_INTERVAL_S:-1800}
+      ROLLBACK_TAGS: ${ROLLBACK_TAGS:-v1.2.4}
+      DEVICE_MAP: nano:v3=nanoV3
+      UPSTREAM_DNS: 1.1.1.1,9.9.9.9
+      ALLOWED_NETS: ${HOME_NET},127.0.0.0/8
+      SESSION_GAP_S: "1800"
+      TZ: Europe/Berlin
+    volumes:
+      - ${DATA_PATH:-/mnt/user/appdata/wlt-update}:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  wlt-dns:
+    build: ./wlt-dns
+    image: wlt-dns:local
+    container_name: wlt-dns
+    restart: unless-stopped
+    networks:
+      br0:
+        ipv4_address: ${WLT_DNS_IP}
+    environment:
+      OVERRIDE_HOST: api.wlanthermo.de
+      OVERRIDE_IP: ${WLT_UPDATE_IP}
+      OVERRIDE_TTL: "60"
+      # public resolvers, never the FritzBox (it asks wlt-dns -> loop)
+      UPSTREAM_SERVERS: 1.1.1.1,9.9.9.9
+      LOG_QUERIES: "0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - SETUID
+      - SETGID
+      - CHOWN
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  br0:
+    external: true

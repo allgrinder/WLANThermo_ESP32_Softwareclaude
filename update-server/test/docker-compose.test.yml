@@ -1,0 +1,48 @@
+# Integration test without internet: fake public resolver and fake api.wlanthermo.de
+# run: ./run_integration.sh
+services:
+  fakedns:
+    image: wlt-dns:local
+    entrypoint: ["dnsmasq", "-k", "--no-resolv", "--no-hosts", "--log-facility=-",
+                 "--host-record=api.wlanthermo.de,172.30.0.30", "--host-record=example.com,203.0.113.7"]
+    networks: {testnet: {ipv4_address: 172.30.0.20}}
+  fakeapi:
+    image: wlt-update:local
+    command: ["python", "/test/fake_api.py"]
+    user: root
+    volumes: ["./:/test:ro"]
+    networks: {testnet: {ipv4_address: 172.30.0.30}}
+  wlt-update:
+    image: wlt-update:local
+    networks: {testnet: {ipv4_address: 172.30.0.10}}
+    dns: [172.30.0.20]
+    sysctls: {net.ipv4.ip_unprivileged_port_start: "0"}
+    environment:
+      PUBLIC_BASE_URL: http://172.30.0.10
+      UPSTREAM_DNS: 172.30.0.20
+      ALLOWED_NETS: 172.30.0.0/24,127.0.0.0/8
+      POLL_INTERVAL_S: "60"
+    volumes: ["${TEST_DATA}:/data"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: [ALL]
+  wlt-dns:
+    image: wlt-dns:local
+    networks: {testnet: {ipv4_address: 172.30.0.11}}
+    environment:
+      OVERRIDE_IP: 172.30.0.10
+      UPSTREAM_SERVERS: 172.30.0.20
+      LOG_QUERIES: "1"
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE, SETUID, SETGID, CHOWN]
+  tester:
+    image: wlt-update:local
+    command: ["python", "/test/test_integration.py"]
+    user: root
+    volumes: ["./:/test:ro"]
+    networks: {testnet: {ipv4_address: 172.30.0.40}}
+    depends_on: [fakedns, fakeapi, wlt-update, wlt-dns]
+networks:
+  testnet:
+    ipam:
+      config: [{subnet: 172.30.0.0/24}]
