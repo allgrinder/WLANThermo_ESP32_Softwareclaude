@@ -60,6 +60,8 @@ public:
   void wireLock();
   void wireRelease();
   void run();
+  // remove the control task from the task watchdog (before an OTA update)
+  void suspendWatchdog();
 
   String getDeviceName();
   String getDeviceID();
@@ -108,6 +110,8 @@ protected:
 
 private:
   static void task(void *parameter);
+  TaskHandle_t taskHandle;
+  volatile boolean watchdogActive;
 };
 
 extern SystemBase *gSystem;

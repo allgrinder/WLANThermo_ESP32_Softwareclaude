@@ -510,11 +510,11 @@ static void runRestartScenario()
   check(fabs(sim.opening - minOutput) < 0.6, "restart: still at minOutput after 10 min");
 }
 
-// security review finding (docs/SECURITY-REVIEW.md, fail-safe): a restart
-// (watchdog, crash, power glitch) with the saved type "off" does not move
-// the servo at all, it keeps the position it had (e.g. big flame).
-static void reportRestartWithTypeOff()
+// security review F-6 / package S1: a restart (watchdog, crash, power
+// glitch) with the saved type "off" must not leave the servo where it was
+static void runRestartWithTypeOff()
 {
+  std::cout << "Restart with type off" << std::endl;
   const float minOutput = 10.0f;
   PlantParams plant = makePlant("P2", 40, 420, 75, 250, 20);
   Sim sim(plant, makeGasProfile(minOutput), 150, 20.0, 13);
@@ -530,9 +530,26 @@ static void reportRestartWithTypeOff()
   sim.pm->assignTemperature(&sim.temperature);
   sim.pm->setTargetTemperature(150);
   sim.pm->setType(pm_off);
+  sim.runFor(1);
+  check(before > 70 && fabs(sim.opening - minOutput) < 0.6 && sim.servoAttached(),
+        "restart off: servo driven to minOutput (" + fmt(before, 1) + " -> " + fmt(sim.opening, 1) + ")");
+  sim.runFor(4);
+  check(!sim.servoAttached() && fabs(sim.opening - minOutput) < 0.6, "restart off: then detached at minOutput");
   sim.runFor(600);
-  std::cout << "info: restart with saved type off: servo " << fmt(before, 1) << " % -> " << fmt(sim.opening, 1)
-            << " % after 10 min (not moved, see SECURITY-REVIEW F-6)" << std::endl;
+  check(fabs(sim.opening - minOutput) < 0.6, "restart off: still at minOutput after 10 min");
+
+  // restart with saved auto: boot park first, then the PID takes over
+  resetIo();
+  delete sim.pm;
+  sim.pm = new Pitmaster(IO1, CH1, IO2, CH2);
+  sim.pm->assignProfile(&sim.profile);
+  sim.pm->assignTemperature(&sim.temperature);
+  sim.pm->setTargetTemperature(150);
+  sim.pm->setType(pm_auto);
+  sim.runFor(1);
+  check(fabs(sim.opening - minOutput) < 0.6, "restart auto: first minOutput");
+  sim.runFor(120);
+  check(sim.servoAttached() && sim.opening > minOutput + 5, "restart auto: then PID controls (" + fmt(sim.opening, 1) + ")");
 }
 
 // pitmaster off (also outside autotune) parks the servo at minOutput
@@ -715,7 +732,7 @@ int main(int argc, char **argv)
 
   runAbortScenarios();
   runRestartScenario();
-  reportRestartWithTypeOff();
+  runRestartWithTypeOff();
   runOffScenario();
   for (size_t i = 0; i < plants.size(); i++)
     runNoFalseAlarm(plants[i], 130);

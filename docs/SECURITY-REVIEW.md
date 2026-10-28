@@ -3,9 +3,13 @@
 Stand: Branch `feature/gas-servo-autotune`, Firmware-Basis v1.2.4. Geprüft wurden Firmware
 (`src/`), WebUI, `update-server/` und das Verhalten im Fehlerfall, wo möglich im Simulator.
 
-**Status: nur Bericht.** Maßnahmen setze ich erst nach deinem Okay um (STOP-Punkt 3). Bereits
-umgesetzt sind lediglich die Sicherheitsfunktionen, die Phase B ausdrücklich verlangt hat; sie sind
-unten als „bereits umgesetzt“ markiert.
+**Status:**
+
+- Nach deiner Entscheidung umgesetzt: **S1** (Servo beim Booten auf `minOutput`, Task-Watchdog)
+  und **S3** (Antwort-Parser eingeschränkt), enthalten ab `v1.2.4-gas.1`.
+- S2, S4, S5 und S6 hast du abgelehnt. Sie bleiben als dokumentiertes Restrisiko stehen.
+- Die Sicherheitsfunktionen, die Phase B ausdrücklich verlangt hat, sind unten als „bereits
+  umgesetzt“ markiert.
 
 **Kontext:** Das Gerät dreht den Gasregler eines Brenners **ohne Zündsicherung**. Jeder, der die
 Firmware oder den Pitmaster kontrolliert, kann den Brenner auf große Flamme stellen. Geht die Flamme
@@ -17,10 +21,10 @@ aus, strömt weiter Gas.
 |---|---|---|---|
 | F-1 | OTA-Update über HTTP ohne Signatur. Jeder Server, der auf `api.wlanthermo.de` antwortet, kann mit `force` Firmware aufspielen. | **kritisch** | Signaturprüfung (ECDSA P-256) vor dem Boot-Partitionswechsel |
 | F-2 | Ohne gesetztes Web-Passwort sind alle Steuer-Endpunkte offen. Einige sind auch **mit** Passwort offen (`/setDC`, `/setnetwork`, `/restart`, `/checkupdate`, `/configreset` …). | **hoch** | Passwortpflicht für alles, was Brenner, Update oder Netz betrifft |
-| F-3 | Antworten jedes Servers (auch der Custom-Cloud) laufen durch denselben Parser: `url` überschreibt die Hosts dauerhaft, `update.force` startet ein Update. | **hoch** | `url` nur akzeptieren, wenn ausdrücklich gewollt; `update` nur aus der Update-Anfrage |
+| F-3 | Antworten jedes Servers (auch der Custom-Cloud) laufen durch denselben Parser: `url` überschreibt die Hosts dauerhaft, `update.force` startet ein Update. | **hoch** | **umgesetzt (S3)** |
 | F-4 | MQTT `/set/pitmaster`, `/set/pid`, `/set/system` … ohne eigene Prüfung, Klartext-MQTT | mittel–hoch | Schalter „MQTT darf steuern“ (Default aus), Broker-ACL |
 | F-5 | Geheimnisse ohne Anmeldung lesbar (`/settings`: MQTT-Passwort, Cloud-Token; `/getpush`: Telegram-/Pushover-Token) | mittel | Nur mit Passwort ausliefern oder maskieren |
-| F-6 | Neustart (Watchdog, Absturz, Stromspitze) mit gespeichertem Modus „aus“ lässt den Servo stehen, wo er war (Simulator: 80 % bleiben 80 %). Im Recovery-Modus läuft gar keine Regelung. | **hoch** | Beim Booten Servo aktiv auf `minOutput` fahren, dann abkoppeln; Task-Watchdog für die Regelung |
+| F-6 | Neustart (Watchdog, Absturz, Stromspitze) mit gespeichertem Modus „aus“ lässt den Servo stehen, wo er war (Simulator: 80 % bleiben 80 %). Im Recovery-Modus läuft gar keine Regelung. | **hoch** | **umgesetzt (S1)**, außer Recovery-Modus |
 | F-7 | Recovery-Modus: offener Firmware-Upload über AP mit festem Passwort `12345678`. Ohne Web-Passwort ist er per `GET /recovery` aus dem WLAN auslösbar. | hoch | `/recovery` nur mit Passwort; Recovery-AP-Passwort gerätespezifisch |
 | F-8 | Basic-Auth über unverschlüsseltes HTTP, im WLAN mitlesbar | mittel | Akzeptieren (kein TLS auf dem Gerät); WLAN mit WPA2/3, Gerät nicht ins Gästenetz |
 | F-9 | Container: Update-Verteilung und Logger ohne Anmeldung (nur Heimnetz-Filter) | niedrig–mittel | Admin- und Schreib-Endpunkte mit Token; Ports nie nach außen |
@@ -115,6 +119,16 @@ solange die Umleitung aktiv ist.
 - `url` ignorieren oder nur mit Signatur annehmen.
 - Antworten der Custom-Cloud gar nicht parsen.
 
+**Umgesetzt (S3):** `src/ServerApiPolicy.h`, angewendet in `Cloud::onReadyStateChange`.
+- Custom-Cloud-Antworten werden nicht geparst.
+- `update` wird nur aus der Antwort auf eine Update-Anfrage übernommen.
+- `url` wird aus Server-Antworten nie übernommen.
+- Der lokale Endpunkt `/setapi` darf weiterhin alles.
+- Unit-Test: `test/sim/unit_policy.cpp` mit ArduinoJson 5.
+
+Restrisiko: Die Antwort auf eine Update-Anfrage kann weiterhin `force` setzen. Das ist F-1, nur
+mit S5 lösbar.
+
 ## F-4 MQTT-Steuerung
 
 **Befund:**
@@ -168,6 +182,19 @@ lässt sich F-4 ausnutzen.
 2. Den System-Task beim ESP32-Task-Watchdog anmelden (`esp_task_wdt_add`, z. B. 10 s). Ein Hänger
    führt dann zum Reset, und Punkt 1 greift.
 3. Im Recovery-Modus den Servo vor dem Start des AP auf `minOutput` fahren.
+
+**Umgesetzt (S1), Punkte 1 und 2:**
+
+- Erster `Pitmaster::update()` nach dem Start:
+  - Profil mit Aktor `SERVO`: Servo auf `minOutput`.
+  - Gespeicherter Modus „aus“: nach 1,5 s abkoppeln.
+  - „auto“ bzw. „manuell“: danach regulär weiter, der Handwert bleibt erhalten.
+- Der System-Task ist beim Task-Watchdog angemeldet (Core-Einstellung 5 s, Reset). Beim Start
+  eines OTA-Updates wird er abgemeldet, damit der hoch priorisierte OTA-Task keinen Reset auslöst.
+- Simulator: „restart off“ 80 % → 10 % → abgekoppelt; „restart auto“ erst `minOutput`, dann PID.
+
+Punkt 3 (Recovery-Modus) ist nicht umgesetzt. Der Recovery-Modus ist ein eigener Startpfad ohne
+Pitmaster-Code (Restrisiko).
 
 **Bereits umgesetzt (Phase B):**
 
@@ -235,8 +262,8 @@ bietet es an, das Gerät installiert es nach einem Klick, mit `force` sogar ohne
 | WLAN-Verlust | Regelung, Autotune, Flamme-aus-Erkennung und Buzzer laufen im System-Task unabhängig vom WLAN weiter. Nur Push und Telemetrie fallen aus; die Telemetrie verwirft, ohne zu blockieren. | Code: `SystemBase::task` ruft `pitmasters.update()`, das Netzwerk läuft im `ConnectTask`. |
 | Abbruch Autotune (Übertemperatur, Fühler weg, Stopp, Profil-, Kanal- oder Sollwechsel, Flamme aus) | Servo fährt auf `minOutput`, nach 1,5 s abgekoppelt, Pitmaster aus | Simulator: alle Pfade ✔ |
 | Neustart während Autotune | Nach dem Boot aktiv auf `minOutput`, Modus manuell | Simulator ✔ |
-| Neustart sonst, Modus „aus“ | **Servo bleibt stehen** (F-6) | Simulator: 80 % → 80 % |
-| Absturz, Watchdog | wie Neustart; ein hängender Task wird heute nicht erkannt (F-6) | Code |
+| Neustart sonst, Modus „aus“ | Servo fährt auf `minOutput`, dann abgekoppelt (S1) | Simulator: 80 % → 10 % |
+| Absturz, Watchdog | Hängt der Regel-Task, löst der Task-Watchdog nach 5 s einen Reset aus, danach wie Neustart (S1) | Code |
 | USB-Versorgung weg | Pitmaster deaktiviert (`PitmasterGrp::enable(false)`), Servo zuerst auf `minOutput`. Ohne Versorgung bewegt sich der Servo aber ohnehin nicht. | Code |
 | Flamme aus | erkannt in 2–5,5 min, danach `minOutput` gehalten, Alarm; das Gas strömt bei kleinster Stufe weiter | Simulator ✔ |
 
@@ -254,7 +281,13 @@ Temperaturheuristik mit Minuten Verzug; in der Zeit strömt Gas. Der Servo kann 
 
 ---
 
-## Vorschlag zur Umsetzung (wartet auf dein Okay)
+## Umsetzung
+
+Entscheidung vom 28.10.2026:
+- **umgesetzt:** S1, S3
+- **nicht gewünscht:** S2, S4, S5, S6
+
+Die ursprüngliche Vorschlagsliste bleibt zur Referenz stehen.
 
 Reihenfolge nach Nutzen und Aufwand:
 

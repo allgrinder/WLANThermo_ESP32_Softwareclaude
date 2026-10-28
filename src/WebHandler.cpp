@@ -28,6 +28,7 @@
 #include "WServer.h"
 #include "API.h"
 #include "DbgPrint.h"
+#include "ServerApiPolicy.h"
 #include "system/SystemBase.h"
 #include "display/DisplayBase.h"
 #include "Version.h"
@@ -1139,7 +1140,14 @@ bool NanoWebHandler::setPID(AsyncWebServerRequest *request, uint8_t *datas)
   return 1;
 }
 
+// local /setapi endpoint: everything allowed (authenticated with web password)
 bool NanoWebHandler::setServerAPI(AsyncWebServerRequest *request, uint8_t *datas)
+{
+  return applyServerAPI(datas, SERVER_ANSWER_ALL);
+}
+
+// server answers (Cloud.cpp) only with the parts allowed by ServerApiPolicy.h
+bool NanoWebHandler::applyServerAPI(uint8_t *datas, uint8_t policy)
 {
 
   //printRequest(datas);
@@ -1148,6 +1156,8 @@ bool NanoWebHandler::setServerAPI(AsyncWebServerRequest *request, uint8_t *datas
   JsonObject &json = jsonBuffer.parseObject((const char *)datas); //https://github.com/esp8266/Arduino/issues/1321
   if (!json.success())
     return 0;
+
+  filterServerAnswer(json, policy);
 
   // URL
   if (json.containsKey("url"))

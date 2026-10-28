@@ -7,8 +7,8 @@ make -C test/sim test
 ```
 
 Danach optional `python3 tools/plot_sim.py test/sim/out docs/sim` für die Plots.
-Ergebnis: `ALL PASSED`, **165 Prüfungen**, zusätzlich 20 Durchläufe mit anderen
-Zufalls-Seeds ohne Fehler. Die Tests laufen in CI bei jedem Push mit (`.github/workflows/gas-ci.yml`).
+Ergebnis: `ALL PASSED`, **170 Prüfungen** im Simulator plus 5 Unit-Tests der
+Server-Antwort-Policy, zusätzlich 20 Durchläufe mit anderen Zufalls-Seeds ohne Fehler. Die Tests laufen in CI bei jedem Push mit (`.github/workflows/gas-ci.yml`).
 
 ## Was getestet wird
 
@@ -55,7 +55,7 @@ Alle Temperaturen sind Gerätewerte (`/data`), Rauschen eingeschlossen. Regel: T
 | P1_150 | ja | 38.2 | 14.8 | 4 | 27.6 | 185 | 4.80 | 5.31 | 2.41 | 0.0059 | 71.0 | 6.36 | 0.35 | 0.32 | 0.36 | nein | 329 |
 | P2_150 | ja | 39.8 | 24.6 | 4 | 19.7 | 320 | 7.65 | 3.31 | 1.50 | 0.0021 | 76.4 | 10.49 | 0.64 | 0.11 | 0.43 | nein | 139 |
 | P3_150 | ja | 52.4 | 30.5 | 4 | 12.9 | 427 | 7.76 | 2.70 | 1.23 | 0.0013 | 83.1 | 9.92 | 0.69 | 0.21 | 0.40 | nein | 142 |
-| P2_130 (minOutput 8 %) | ja | 61.7 | 49.3 | 4 | 12.3 | 656 | 4.32 | 3.58 | 1.63 | 0.0011 | 169.7 | 2.00 | 0.62 | −0.27 | 0.98 | nein | 137 |
+| P2_130 (minOutput 8 %) | ja | 61.7 | 49.3 | 4 | 12.3 | 656 | 4.28 | 3.61 | 1.64 | 0.0011 | 171.1 | 2.02 | 0.63 | −0.22 | 0.99 | nein | 129 |
 
 Abnahme (die sechs Szenarien 110/150 °C × P1–P3):
 
@@ -104,6 +104,8 @@ Relay-Phase mit hohem Ausgang ab (Servo bei 39 %) und löst dann den Abbruch aus
 | Profilwechsel | 5 | 39 % → 12 %, dann abgekoppelt | [abort_profile_change](sim/abort_profile_change.png) |
 | Flamme aus während Autotune | 11 | 39 % → 12 %, dann abgekoppelt | [abort_flame_out](sim/abort_flame_out.png) |
 | Neustart mitten im Autotune | 8 | PWM weg, Servo hielt 39 %. Nach dem Boot fährt er aktiv auf 12 % und bleibt dort (Modus manuell). | – |
+| Neustart mit gespeichertem „aus“ (S1) | – | Servo hielt 80 %. Nach dem Boot fährt er auf 10 % (`minOutput`) und wird abgekoppelt. | – |
+| Neustart mit gespeichertem „auto“ (S1) | – | erst `minOutput`, dann regelt der PID | – |
 | Pitmaster aus ohne Autotune | – | 100 % → 15 %, dann abgekoppelt | – |
 | Deckel offen (PID) | – | nie unter `minOutput` | – |
 

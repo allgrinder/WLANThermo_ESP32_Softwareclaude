@@ -45,6 +45,7 @@ OtaUpdate::OtaUpdate()
 
 void OtaUpdate::startUpdate()
 {
+  gSystem->suspendWatchdog();
   otaUpdateState = OtaUpdateState::UpdateInProgress;
   xTaskCreatePinnedToCore(OtaUpdate::task, "OtaUpdate::task", 10000, this, TASK_PRIORITY_OTA_UPDATE, NULL, 1);
 }

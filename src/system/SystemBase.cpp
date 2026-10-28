@@ -27,6 +27,7 @@
 #include "RecoveryMode.h"
 #include "TaskConfig.h"
 #include "ArduinoLog.h"
+#include "esp_task_wdt.h"
 
 #define STRINGIFY(s) #s
 
@@ -55,6 +56,8 @@ SystemBase::SystemBase()
   initDone = false;
   disableTypeK = false;
   disableReceiver = false;
+  taskHandle = NULL;
+  watchdogActive = false;
   wireSemaHandle = xSemaphoreCreateMutex();
   esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "NULL", &this->wirePmHandle);
 }
@@ -77,8 +80,18 @@ void SystemBase::task(void *parameter)
   TickType_t xLastWakeTime = xTaskGetTickCount();
   SystemBase *system = (SystemBase *)parameter;
 
+  // the control loop is supervised by the task watchdog (5 s, reset on
+  // timeout); after the reset the servo is driven to minOutput (S1)
+  system->taskHandle = xTaskGetCurrentTaskHandle();
+  system->watchdogActive = (esp_task_wdt_add(NULL) == ESP_OK);
+
   for (;;)
   {
+    if (system->watchdogActive)
+    {
+      esp_task_wdt_reset();
+    }
+
     //Serial.printf("SystemBase::task, highWaterMark: %d\n", uxTaskGetStackHighWaterMark(NULL));
 
     uint32_t time = esp_timer_get_time();
@@ -255,6 +268,17 @@ void SystemBase::loadConfig()
 boolean SystemBase::isInitDone()
 {
   return this->initDone;
+}
+
+void SystemBase::suspendWatchdog()
+{
+  // called from the OTA path: the high priority OTA task may starve the
+  // control task while flashing, that must not end in a watchdog reset
+  if (this->watchdogActive && (this->taskHandle != NULL))
+  {
+    this->watchdogActive = false;
+    esp_task_wdt_delete(this->taskHandle);
+  }
 }
 
 void SystemBase::restart()

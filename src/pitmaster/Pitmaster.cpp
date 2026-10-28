@@ -92,6 +92,7 @@ Pitmaster::Pitmaster(uint8_t ioPin1, uint8_t channel1, uint8_t ioPin2, uint8_t c
     this->pid.setDCount(PM_DEFAULT_DCOUNT);
     this->filteredTemp = 0;
     this->medianPrimed = false;
+    this->bootPark = true;
     this->parkPending = false;
     this->parkUntil = 0u;
     this->events = 0u;
@@ -629,6 +630,25 @@ float Pitmaster::getOPLTemperature()
 
 void Pitmaster::update()
 {
+    // After a (re)start the servo position is unknown: the PWM stopped and the
+    // servo kept its position, maybe big flame. Drive it to minOutput once
+    // before anything else, with "off" it is detached afterwards (security
+    // review F-6, package S1).
+    if (this->bootPark && (NULL != this->profile))
+    {
+        this->bootPark = false;
+        if (SERVO == this->profile->actuator)
+        {
+            // keep the configured (manual) value, only the position is secured
+            float configuredValue = this->value;
+            this->initActuators();
+            this->startServoPark();
+            this->value = configuredValue;
+            Log.notice("Boot: servo driven to minOutput" CR);
+            return;
+        }
+    }
+
     // finish a pending servo park (detach after the movement)
     this->serviceSafePark();
 

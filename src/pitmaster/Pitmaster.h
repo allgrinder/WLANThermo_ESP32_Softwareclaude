@@ -204,6 +204,7 @@ private:
 
   float filteredTemp;
   boolean medianPrimed;
+  boolean bootPark;
   boolean parkPending;
   uint32_t parkUntil;
   uint8_t events;
