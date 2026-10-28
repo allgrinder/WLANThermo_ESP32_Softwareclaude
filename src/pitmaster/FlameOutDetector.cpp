@@ -50,10 +50,9 @@ void FlameOutDetector::reset()
   this->sampleHead = 0u;
   this->lastSampleMs = 0u;
   this->sampleStarted = false;
-  this->lidHold = false;
-  this->lidHoldUntilMs = 0u;
   this->outputHigh = false;
   this->outputHighSinceMs = 0u;
+  this->outputHighStartTemp = 0;
   this->suspected = false;
 }
 
@@ -78,7 +77,7 @@ void FlameOutDetector::addSample(float x)
     this->sampleCount++;
 }
 
-bool FlameOutDetector::update(float x, float setpoint, float output, bool lidOpen, uint32_t nowMs)
+bool FlameOutDetector::update(float x, float setpoint, float output, bool lidOpen, uint32_t nowMs, bool relay)
 {
   if (this->triggered)
     return true;
@@ -106,25 +105,16 @@ bool FlameOutDetector::update(float x, float setpoint, float output, bool lidOpe
     addSample(x);
   }
 
-  // open lid: no detection during and one window after the lid event
-  if (lidOpen)
-  {
-    this->lidHold = true;
-    this->lidHoldUntilMs = nowMs + (this->windowS * 1000u);
-  }
-  else if (this->lidHold && ((int32_t)(nowMs - this->lidHoldUntilMs) >= 0))
-  {
-    this->lidHold = false;
-  }
-
-  // output condition must hold for some time
+  // output condition must hold for some time (never while the lid is open,
+  // the pitmaster drives minOutput then)
   float outputRef = this->biasKnown ? this->bias : FO_DEFAULT_OUTPUT_REF;
-  if (output >= outputRef)
+  if ((output >= outputRef) && (false == lidOpen))
   {
     if (false == this->outputHigh)
     {
       this->outputHigh = true;
       this->outputHighSinceMs = nowMs;
+      this->outputHighStartTemp = x;
     }
   }
   else
@@ -159,28 +149,32 @@ bool FlameOutDetector::update(float x, float setpoint, float output, bool lidOpe
     if ((maxValue - x) > this->drop)
     {
       steadyDrop = true;
-      float previous = maxValue;
+      float runningMin = maxValue;
 
       for (uint8_t i = maxIndex + 1u; i < windowSamples; i++)
       {
         float value = this->samples[(start + i) % FO_MAX_SAMPLES];
-        if (value > (previous + FO_RISE_TOLERANCE))
+        if (value > (runningMin + FO_RISE_TOLERANCE))
         {
           steadyDrop = false;
           break;
         }
-        previous = value;
+        if (value < runningMin)
+          runningMin = value;
       }
 
-      if (x > (previous + FO_RISE_TOLERANCE))
+      if (x > (runningMin + FO_RISE_TOLERANCE))
         steadyDrop = false;
     }
   }
 
   this->suspected = steadyDrop && (x < setpoint);
 
-  if (this->suspected && (false == this->lidHold) && this->outputHigh &&
-      ((nowMs - this->outputHighSinceMs) >= (FO_OUTPUT_HOLD_S * 1000u)))
+  uint32_t holdS = relay ? FO_OUTPUT_HOLD_RELAY_S : FO_OUTPUT_HOLD_S;
+
+  if (this->suspected && (false == lidOpen) && this->outputHigh &&
+      ((nowMs - this->outputHighSinceMs) >= (holdS * 1000u)) &&
+      (x <= (this->outputHighStartTemp - FO_HOLD_MIN_FALL)))
   {
     this->triggered = true;
   }

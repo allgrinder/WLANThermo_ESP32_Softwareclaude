@@ -26,6 +26,7 @@
 #include "display/DisplayOled.h"
 #include "Constants.h"
 #include "DeviceId.h"
+#include "pitmaster/GasDefaults.h"
 
 // PITMASTER
 #define PITMASTER0IO1 25u   // Fan Pin
@@ -43,10 +44,6 @@
 
 #define STANDBY_SLEEP_CYCLE_TIME 500000u // 500ms
 
-// "Gas Servo" start values, determined with the simulator (test/sim)
-#define GAS_KP 3.0
-#define GAS_KI 0.008
-#define GAS_KD 60.0
 
 enum ledcChannels
 {

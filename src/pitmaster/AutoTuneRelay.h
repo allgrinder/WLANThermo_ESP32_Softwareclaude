@@ -114,6 +114,9 @@ public:
   uint8_t getMaxCycles() const { return config.maxCycles; }
   float getSetpoint() const { return config.setpoint; }
   float getBias() const { return bias; }
+  // estimate of the steady state output at the setpoint (used for a
+  // bumpless PID start): min(bias, mean output of the last 3 relay cycles)
+  float getOutputMean() const { return outputMean; }
   float getTu() const { return tu; }       // s
   float getA() const { return a; }         // °C
   float getKu() const { return ku; }       // %/°C
@@ -157,11 +160,15 @@ private:
   uint8_t cycleCount;
   float cycleTu[AT_MAX_CYCLES];
   float cycleA[AT_MAX_CYCLES];
+  float cycleOut[AT_MAX_CYCLES];
+  float cycleOutSum;
+  uint32_t cycleOutCount;
   float outHigh;
   float outLow;
 
   // result
   float bias;
+  float outputMean;
   float tu;
   float a;
   float ku;

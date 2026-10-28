@@ -46,6 +46,7 @@ AutoTuneRelay::AutoTuneRelay()
   this->startMs = 0u;
   this->cycleCount = 0u;
   this->bias = 0;
+  this->outputMean = 0;
   this->tu = 0;
   this->a = 0;
   this->ku = 0;
@@ -108,10 +109,14 @@ void AutoTuneRelay::start(const AtConfig &newConfig, uint32_t nowMs)
   this->cycleCount = 0u;
   memset(this->cycleTu, 0, sizeof(this->cycleTu));
   memset(this->cycleA, 0, sizeof(this->cycleA));
+  memset(this->cycleOut, 0, sizeof(this->cycleOut));
+  this->cycleOutSum = 0;
+  this->cycleOutCount = 0u;
   this->outHigh = 0;
   this->outLow = 0;
 
   this->bias = 0;
+  this->outputMean = 0;
   this->tu = 0;
   this->a = 0;
   this->ku = 0;
@@ -168,8 +173,12 @@ void AutoTuneRelay::onRisingSwitch(uint32_t nowMs)
   {
     this->cycleTu[this->cycleCount] = (nowMs - this->lastRiseMs) / 1000.0f;
     this->cycleA[this->cycleCount] = (this->cycleMax - this->cycleMin) / 2.0f;
+    this->cycleOut[this->cycleCount] = (this->cycleOutCount > 0u) ? (this->cycleOutSum / this->cycleOutCount) : this->bias;
     this->cycleCount++;
   }
+
+  this->cycleOutSum = 0;
+  this->cycleOutCount = 0u;
 
   this->risingSeen = true;
   this->lastRiseMs = nowMs;
@@ -254,15 +263,24 @@ void AutoTuneRelay::computeResult()
   uint8_t first = this->cycleCount - 3u;
   float tuSum = 0;
   float aSum = 0;
+  float outSum = 0;
 
   for (uint8_t i = first; i < this->cycleCount; i++)
   {
     tuSum += this->cycleTu[i];
     aSum += this->cycleA[i];
+    outSum += this->cycleOut[i];
   }
 
   this->tu = tuSum / 3.0f;
   this->a = aSum / 3.0f;
+  // The time mean of a relay output overestimates the steady state output
+  // for a concave valve characteristic (gas: heat ~ sqrt(opening)), the bias
+  // from the approach is often closer. Take the smaller one, the PID
+  // integral corrects the rest.
+  this->outputMean = outSum / 3.0f;
+  if (this->bias < this->outputMean)
+    this->outputMean = this->bias;
 
   float dEff = (this->outHigh - this->outLow) / 2.0f;
 
@@ -381,8 +399,8 @@ float AutoTuneRelay::update(float x, bool sensorActive, float pidOutput, uint32_
 
     if (AtState::Running != this->state)
     {
-      // done or aborted: hand over at the bias (done) or minOutput (aborted)
-      this->output = (AtState::Done == this->state) ? this->bias : this->config.minOutput;
+      // done or aborted: hand over at the mean output (done) or minOutput (aborted)
+      this->output = (AtState::Done == this->state) ? clampOutput(this->outputMean) : this->config.minOutput;
       return this->output;
     }
   }
@@ -394,5 +412,10 @@ float AutoTuneRelay::update(float x, bool sensorActive, float pidOutput, uint32_
   }
 
   this->output = this->relayHigh ? this->outHigh : this->outLow;
+
+  // output mean of the running cycle (called once per controller cycle)
+  this->cycleOutSum += this->output;
+  this->cycleOutCount++;
+
   return this->output;
 }

@@ -151,6 +151,7 @@ void API::autotuneObj(JsonObject &jObj, Pitmaster *pm)
   jObj["cycles"] = at->getMaxCycles();
   jObj["set"] = double_with_n_digits(at->getSetpoint(), 1);
   jObj["bias"] = double_with_n_digits(at->getBias(), 1);
+  jObj["outMean"] = double_with_n_digits(at->getOutputMean(), 1);
   jObj["Tu"] = double_with_n_digits(at->getTu(), 1);
   jObj["a"] = double_with_n_digits(at->getA(), 2);
   jObj["Ku"] = double_with_n_digits(at->getKu(), 3);

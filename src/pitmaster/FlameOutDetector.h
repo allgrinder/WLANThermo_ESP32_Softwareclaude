@@ -26,13 +26,16 @@
 //
 // Trigger condition (all must be true):
 //  - the temperature dropped by more than `drop` °C within `windowS`
-//    and the drop is steady (no rise > 0.5 °C between 10 s samples since the
-//    maximum of the window)
+//    and the drop is steady (never more than 0.5 °C above the running
+//    minimum since the maximum of the window)
 //  - the temperature is below the setpoint
-//  - the output is >= reference for at least 60 s; reference is the bias
-//    (learned from autotune or from steady state operation) or 50 % if no
-//    bias is known yet
-//  - no open lid detected now or within the last window
+//  - the output is >= reference without interruption for the hold time
+//    (120 s, 240 s during the autotune relay) and the temperature still fell
+//    by at least 1 °C during that time. With a burning flame the temperature
+//    turns around within the dead time, with the flame out it does not.
+//    Reference is the bias (learned from autotune or from steady state
+//    operation) or 50 % if no bias is known yet.
+//  - no open lid is detected (the pitmaster drives minOutput then anyway)
 // The trigger is latched until acknowledge() is called.
 
 #define FO_SAMPLE_INTERVAL_S 10u
@@ -41,7 +44,9 @@
 #define FO_DEFAULT_WINDOW_S 300u
 #define FO_DEFAULT_OUTPUT_REF 50.0f
 #define FO_RISE_TOLERANCE 0.5f
-#define FO_OUTPUT_HOLD_S 60u
+#define FO_OUTPUT_HOLD_S 120u
+#define FO_OUTPUT_HOLD_RELAY_S 240u
+#define FO_HOLD_MIN_FALL 1.0f
 #define FO_BIAS_BAND 3.0f
 #define FO_BIAS_LEARN_S 300u
 
@@ -58,7 +63,8 @@ public:
 
   // call once per controller cycle (1 s)
   // returns true when the flame out is detected (latched)
-  bool update(float x, float setpoint, float output, bool lidOpen, uint32_t nowMs);
+  // relay: true during the autotune relay phase (longer hold time)
+  bool update(float x, float setpoint, float output, bool lidOpen, uint32_t nowMs, bool relay = false);
 
   bool isTriggered() const { return triggered; }
   // partial condition (steady drop below setpoint seen), for telemetry
@@ -75,9 +81,8 @@ private:
   uint8_t sampleHead;
   uint32_t lastSampleMs;
   bool sampleStarted;
-  uint32_t lidHoldUntilMs;
-  bool lidHold;
   uint32_t outputHighSinceMs;
+  float outputHighStartTemp;
   bool outputHigh;
   float bias;
   bool biasKnown;

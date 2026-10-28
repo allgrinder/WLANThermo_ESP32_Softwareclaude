@@ -40,6 +40,7 @@
 #define OPL_FALL 97   // OPEN LID LIMIT FALLING
 #define OPL_RISE 100  // OPEN LID LIMIT RISING
 #define OPL_PAUSE 300 // OPEN LID PAUSE
+#define OPL_PAUSE_FLAMEOUT 120 // OPEN LID PAUSE with flame out detection (gas)
 #define OPL_THRESHOLD 2
 
 #define MEDIAN_SIZE 10u
@@ -493,8 +494,8 @@ boolean Pitmaster::checkAutoTune()
         this->profile->ki = this->autoTune->getKi();
         this->profile->kd = this->autoTune->getKd();
         this->pid.reset();
-        this->pid.preloadIntegral(this->autoTune->getBias(), this->profile->ki);
-        this->flameOutDetector.setBias(this->autoTune->getBias());
+        this->pid.preloadIntegral(this->autoTune->getOutputMean(), this->profile->ki);
+        this->flameOutDetector.setBias(this->autoTune->getOutputMean());
         this->type = pm_auto;
         this->settingsChanged = true;
         this->events |= PM_EVENT_SAVE | PM_EVENT_AT_FINISHED;
@@ -522,7 +523,8 @@ boolean Pitmaster::checkAutoTune()
     if (this->profile->flameOut)
     {
         this->flameOutDetector.configure(this->profile->foDrop, this->profile->foWindow);
-        if (this->flameOutDetector.update(x, this->targetTemperature, newValue, false, millis()))
+        bool relay = (AtPhase::Relay == this->autoTune->getPhase());
+        if (this->flameOutDetector.update(x, this->targetTemperature, newValue, false, millis(), relay))
         {
             this->events |= PM_EVENT_FLAMEOUT;
             this->abortAutoTune(AtError::FlameOut);
@@ -589,7 +591,8 @@ boolean Pitmaster::checkOpenLid()
         { // Opened lid detected!            
             openLid.detected = true;
             openLid.temp = openLid.ref;
-            openLid.count = OPL_PAUSE; // TODO: check pause
+            // gas: shorter pause, a flame out looks like an open lid at first
+            openLid.count = this->profile->flameOut ? OPL_PAUSE_FLAMEOUT : OPL_PAUSE; // TODO: check pause
             
             Log.notice("OPL: %d" CR, (int)(openLid.fall_c));
             Log.notice("OPL detected: %F" CR, (float)(this->temperature->getValue()));
