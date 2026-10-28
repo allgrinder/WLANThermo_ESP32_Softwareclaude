@@ -5,7 +5,7 @@ CXX ?= g++
 CXXFLAGS ?= -std=c++14 -O2 -Wall -Wno-unused-variable -Wno-unused-but-set-variable -Wno-sign-compare -Wno-delete-non-virtual-dtor -Wno-maybe-uninitialized
 INCLUDES = -Istubs -I$(SRC_PM) -Ithird_party -DARDUINO=100
 SOURCES = sim_main.cpp plant.cpp $(SRC_PM)/Pitmaster.cpp $(SRC_PM)/PidCore.cpp \
-          $(SRC_PM)/AutoTuneRelay.cpp $(SRC_PM)/FlameOutDetector.cpp
+          $(SRC_PM)/AutoTuneRelay.cpp $(SRC_PM)/FlameOutDetector.cpp $(SRC_PM)/BiasMap.cpp
 
 ARDUINOJSON = .deps/ArduinoJson
 
@@ -25,6 +25,8 @@ test: gas_sim unit_policy
 	mkdir -p out
 	./unit_policy
 	./gas_sim out
+	mkdir -p out/smart
+	./gas_sim out/smart --smart
 
 clean:
 	rm -rf gas_sim unit_policy out

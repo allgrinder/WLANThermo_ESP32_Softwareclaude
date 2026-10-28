@@ -98,10 +98,13 @@ static PlantParams makePlant(const char *name, double L, double tau, double tMin
   return p;
 }
 
+// smart: 0 = controller of release v1.2.4-gas.1, 1 = smart control
+static uint8_t gDefaultSmart = 0;
+
 static PitmasterProfile makeGasProfile(float minOutput)
 {
-  //                       Name,       Nr, Aktor, Kp,  Ki,    Kd,  DCmin, DCmax, JP, SPMIN, SPMAX, LINK, OPL, TUNE, MINOUT, ATD, ATH, ATRULE, FO, FODROP, FOWIN
-  PitmasterProfile p = {"Gas Servo", 4, SERVO, GAS_KP, GAS_KI, GAS_KD, 0, 100, 100, 0, 100, 0, 1, 0, minOutput, 20, 1.5, 0, 1, 15, 300};
+  //                       Name,       Nr, Aktor, Kp,  Ki,    Kd,  DCmin, DCmax, JP, SPMIN, SPMAX, LINK, OPL, TUNE, MINOUT, ATD, ATH, ATRULE, FO, FODROP, FOWIN, SMART
+  PitmasterProfile p = {"Gas Servo", 4, SERVO, GAS_KP, GAS_KI, GAS_KD, 0, 100, 100, 0, 100, 0, 1, 0, minOutput, 20, 1.5, 0, 1, 15, 300, gDefaultSmart};
   return p;
 }
 
@@ -314,6 +317,83 @@ static void testRules()
         "Tyreus-Luyben: Kp=Ku/2.2, ki=Kp/(2.2Tu), kd=Kp*Tu/6.3");
   AutoTuneRelay::computeGains(AtRule::ZieglerNicholsNoOvershootPid, 10.0f, 300.0f, kp, ki, kd);
   check(fabs(kp - 2.0) < 1e-4 && fabs(ki - 2.0 / 150) < 1e-6 && fabs(kd - 200.0) < 1e-3, "ZN no overshoot: Kp=0.2Ku, Ti=Tu/2, Td=Tu/3");
+}
+
+struct QualityRow
+{
+  std::string plant;
+  float set;
+  double tReach, overStart, tSettle, overUp, settleUp, underDown, settleDown, steadyDev, lidOver, lidRecover;
+};
+static QualityRow runQuality(const PlantParams &plant, const PitmasterProfile &profile, float set, uint32_t seed,
+                             const std::string &csvName, BiasMap *map);
+static std::string minutes(double s);
+
+// ---------------------------------------------------------------------------
+// test 2: learned output table of the smart control
+// ---------------------------------------------------------------------------
+static void testBiasMap()
+{
+  std::cout << "Learned output table (BiasMap)" << std::endl;
+  BiasMap map;
+  float out = 0;
+  bool ok = map.estimate(130, out);
+  check(!ok, "empty table: no estimate");
+  map.seed(130, 12.0f);
+  ok = map.estimate(130, out);
+  check(ok && fabs(out - 12.0f) < 0.01f, "seed 130 °C -> 12 % (" + fmt(out, 1) + ")");
+  ok = map.estimate(150, out);
+  check(ok && out > 12.0f && out < 20.0f, "one point: hotter needs more (" + fmt(out, 1) + " %)");
+  ok = map.estimate(110, out);
+  check(ok && out < 12.0f && out > 5.0f, "one point: colder needs less (" + fmt(out, 1) + " %)");
+  for (int i = 0; i < 300; i++)
+    map.learn(150, 20.0f);
+  check(map.isKnown((150 - BIASMAP_T_MIN) / BIASMAP_T_STEP), "150 °C learned after 300 s steady");
+  ok = map.estimate(140, out);
+  check(ok && fabs(out - 16.0f) < 0.6f, "interpolation 140 °C between 12 % and 20 % (" + fmt(out, 1) + ")");
+  ok = map.estimate(170, out);
+  check(ok && out > 20.0f && out <= 28.5f, "extrapolation with the learned slope, limited (" + fmt(out, 1) + ")");
+  for (int i = 0; i < 2000; i++)
+    map.learn(150, 18.0f);
+  ok = map.estimate(150, out);
+  check(ok && fabs(out - 18.0f) < 1.0f, "learning follows a changed need (" + fmt(out, 1) + ")");
+  map.clear();
+  ok = map.estimate(130, out);
+  check(!ok && 0 == map.knownCount(), "clear forgets everything");
+}
+
+// control quality limits of the smart control (learned table), --smart run
+static void runSmartQualityChecks()
+{
+  std::cout << "Smart control quality over the temperature range" << std::endl;
+  std::vector<PlantParams> ps = {makePlant("P1", 20, 240, 70, 220, 10), makePlant("P2", 40, 420, 75, 250, 20),
+                                 makePlant("P3", 60, 600, 80, 280, 30)};
+  for (size_t k = 0; k < ps.size(); k++)
+  {
+    PitmasterProfile tuned;
+    BiasMap learned;
+    {
+      Sim sim(ps[k], makeGasProfile(0.0f), 130, 20.0, 500 + k);
+      sim.runFor(2);
+      sim.pm->startAutoTune();
+      sim.runUntil([&]() { return !sim.pm->isAutoTuneRunning(); }, 150 * 60);
+      tuned = sim.profile;
+      learned = *sim.pm->getBiasMap();
+    }
+    for (float set : {130.0f, 110.0f, 150.0f, 120.0f})
+      runQuality(ps[k], tuned, set, 900 + k + (uint32_t)set, "", &learned);
+    for (float set : {110.0f, 150.0f})
+    {
+      BiasMap map = learned;
+      QualityRow r = runQuality(ps[k], tuned, set, 600 + k + (uint32_t)set, "", &map);
+      std::string n = ps[k].name + "_" + fmt(set, 0);
+      check(r.overStart < 3.0, n + ": smart cold start overshoot < 3 °C (" + fmt(r.overStart, 2) + ")");
+      check(r.tSettle >= 0 && r.tSettle <= 20 * 60, n + ": smart settled within 20 min (" + minutes(r.tSettle) + ")");
+      check(r.lidOver < 3.0, n + ": smart overshoot after open lid < 3 °C (" + fmt(r.lidOver, 2) + ")");
+      check(r.lidRecover >= 0 && r.lidRecover <= 20 * 60, n + ": smart recovered after open lid within 20 min (" + minutes(r.lidRecover) + ")");
+      check(r.steadyDev <= 2.0 && r.overUp < 5.0, n + ": smart hold +-2 °C, +15 step overshoot < 5 °C");
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -656,8 +736,158 @@ static void runCook(const PlantParams &plant, const std::string &csvName, bool a
   sim.runFor(15 * 60);
 }
 
+// ---------------------------------------------------------------------------
+// control quality over the temperature range: autotune once at 130 °C, then
+// cook at 110/120/130/150 with these gains (what the user will do)
+// ---------------------------------------------------------------------------
+
+// seconds until x stays within +-band of set for the rest of the window (min stayS), -1: never
+static double settleTime(const std::vector<double> &x, double set, double band, double stayS)
+{
+  for (size_t i = 0; i < x.size(); i++)
+  {
+    bool ok = true;
+    for (size_t j = i; j < x.size(); j++)
+      if (fabs(x[j] - set) > band)
+      {
+        ok = false;
+        break;
+      }
+    if (ok && (x.size() - i) >= stayS)
+      return (double)i;
+  }
+  return -1;
+}
+
+static std::vector<double> record(Sim &sim, double seconds)
+{
+  std::vector<double> x;
+  uint32_t steps = (uint32_t)(seconds * 5.0);
+  for (uint32_t i = 0; i < steps; i++)
+  {
+    sim.step();
+    if ((gSimMillis % 1000u) == 0u)
+      x.push_back(sim.temperature.getValue());
+  }
+  return x;
+}
+
+static QualityRow runQuality(const PlantParams &plant, const PitmasterProfile &profile, float set, uint32_t seed,
+                             const std::string &csvName, BiasMap *map)
+{
+  QualityRow r;
+  r.plant = plant.name;
+  r.set = set;
+  Sim sim(plant, profile, set, 20.0, seed);
+  if (map)
+    *sim.pm->getBiasMap() = *map; // learned table of earlier cooks
+  if (!csvName.empty())
+    sim.openCsv(csvName);
+  sim.pm->setType(pm_auto);
+
+  std::vector<double> a = record(sim, 60 * 60);
+  r.tReach = -1;
+  for (size_t i = 0; i < a.size(); i++)
+    if (a[i] >= set - 2)
+    {
+      r.tReach = i;
+      break;
+    }
+  r.overStart = *std::max_element(a.begin(), a.end()) - set;
+  r.tSettle = settleTime(a, set, 2.0, 300);
+
+  sim.pm->setTargetTemperature(set + 15);
+  std::vector<double> b = record(sim, 40 * 60);
+  r.overUp = *std::max_element(b.begin(), b.end()) - (set + 15);
+  r.settleUp = settleTime(b, set + 15, 2.0, 300);
+
+  sim.pm->setTargetTemperature(set);
+  std::vector<double> c = record(sim, 40 * 60);
+  r.underDown = set - *std::min_element(c.begin(), c.end());
+  r.settleDown = settleTime(c, set, 2.0, 300);
+
+  std::vector<double> d = record(sim, 10 * 60);
+  r.steadyDev = 0;
+  for (double v : d)
+    r.steadyDev = std::max(r.steadyDev, fabs(v - set));
+
+  sim.plant.lidOpen = true;
+  sim.runFor(60);
+  sim.plant.lidOpen = false;
+  std::vector<double> e = record(sim, 30 * 60);
+  r.lidOver = *std::max_element(e.begin(), e.end()) - set;
+  r.lidRecover = settleTime(e, set, 2.0, 300);
+  if (map)
+    *map = *sim.pm->getBiasMap();
+  return r;
+}
+
+static std::string minutes(double s)
+{
+  return (s < 0) ? std::string("nie") : fmt(s / 60.0, 1);
+}
+
+// smart: 0 baseline, 1 smart first cook (table seeded by the autotune only),
+// 2 smart after some cooks (table learned in one cook at each temperature)
+static void runQualitySuite(const std::vector<PlantParams> &plants, const std::string &label, std::ostream &md, uint8_t smart)
+{
+  md << "### " << label << "\n\n";
+  md << "| Strecke | Soll | Anheizen bis Soll−2 [min] | Überschwingen Start [°C] | eingeschwungen ±2 [min] | +15: Überschw. [°C] | +15: eingeschw. [min] | −15: Unterschw. [°C] | −15: eingeschw. [min] | Halten max [°C] | Deckel: Überschw. [°C] | Deckel: erholt [min] |\n";
+  md << "|---|---|---|---|---|---|---|---|---|---|---|---|\n";
+  for (size_t k = 0; k < plants.size(); k++)
+  {
+    gDefaultSmart = smart ? 1u : 0u;
+    BiasMap seeded;
+    PitmasterProfile tuned;
+    {
+      // autotune once at 130 °C, keep the profile and the seeded table
+      Sim sim(plants[k], makeGasProfile(0.0f), 130, 20.0, 500 + k);
+      sim.runFor(2);
+      sim.pm->startAutoTune();
+      sim.runUntil([&]() { return !sim.pm->isAutoTuneRunning(); }, 150 * 60);
+      tuned = sim.profile;
+      seeded = *sim.pm->getBiasMap();
+    }
+    BiasMap learned = seeded;
+    if (2u == smart)
+    {
+      // some earlier cooks: one at each temperature
+      for (float set : {130.0f, 110.0f, 150.0f, 120.0f})
+        runQuality(plants[k], tuned, set, 900 + k + (uint32_t)set, "", &learned);
+    }
+    for (float set : {110.0f, 120.0f, 130.0f, 150.0f})
+    {
+      BiasMap map = (2u == smart) ? learned : seeded;
+      QualityRow r = runQuality(plants[k], tuned, set, 600 + k + (uint32_t)set,
+                                "quality_" + std::to_string(smart) + "_" + plants[k].name + "_" + fmt(set, 0), smart ? &map : NULL);
+      md << "| " << r.plant << " | " << fmt(r.set, 0) << " | " << minutes(r.tReach) << " | " << fmt(r.overStart, 2) << " | "
+         << minutes(r.tSettle) << " | " << fmt(r.overUp, 2) << " | " << minutes(r.settleUp) << " | " << fmt(r.underDown, 2) << " | "
+         << minutes(r.settleDown) << " | " << fmt(r.steadyDev, 2) << " | " << fmt(r.lidOver, 2) << " | " << minutes(r.lidRecover) << " |\n";
+    }
+  }
+  md << "\n";
+}
+
 int main(int argc, char **argv)
 {
+  if (getenv("SIM_SMART") != NULL)
+    gDefaultSmart = 1u;
+
+  if (argc >= 2 && std::string(argv[1]) == "--quality")
+  {
+    gOutDir = (argc >= 3) ? argv[2] : "out";
+    std::vector<PlantParams> ps = {makePlant("P1", 20, 240, 70, 220, 10), makePlant("P2", 40, 420, 75, 250, 20),
+                                   makePlant("P3", 60, 600, 80, 280, 30)};
+    std::ofstream md(gOutDir + "/quality.md");
+    runQualitySuite(ps, "Vorher: Regler v1.2.4-gas.1", md, 0);
+    runQualitySuite(ps, "Smart, erster Grillabend (nur Autotune-Punkt bekannt)", md, 1);
+    runQualitySuite(ps, "Smart, nach einigen Grillabenden (Tabelle gelernt)", md, 2);
+    md.close();
+    std::ifstream in(gOutDir + "/quality.md");
+    std::cout << in.rdbuf();
+    return 0;
+  }
+
   if (argc >= 10 && std::string(argv[1]) == "--cook")
   {
     // --cook out.csv L tau tMin tMax sensorLag valveExp [autotune 0/1]
@@ -708,6 +938,10 @@ int main(int argc, char **argv)
     {
       gSeedOffset = (uint32_t)atoi(argv[++i]);
     }
+    else if (arg == "--smart")
+    {
+      gDefaultSmart = 1u;
+    }
     else if (arg == "-v")
     {
       gSimLogEnabled = true;
@@ -720,6 +954,9 @@ int main(int argc, char **argv)
 
   testPidEquivalence();
   testRules();
+  testBiasMap();
+  if (gDefaultSmart)
+    runSmartQualityChecks();
 
   for (float set : {110.0f, 150.0f})
     for (size_t i = 0; i < plants.size(); i++)
