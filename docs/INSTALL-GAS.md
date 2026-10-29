@@ -198,21 +198,23 @@ so fein sein wie die Mechanik.
    Einstellung: Die Regelung geht nie unter diesen Punkt.
 3. `Mindestausgang` im Profil auf 0 lassen. `SPmin` ist ja schon die kleinste sichere Flamme.
 
-**Schritt 4 – Kennlinie grob prüfen (Deckel zu, je Punkt ca. 20–30 min)**
+**Schritt 4 – SPmax begrenzen (Deckel zu, ca. 30 min)**
 
-Pitmaster *manuell*, nacheinander 0 %, 25 % und 50 %. Jeweils warten, bis die Temperatur
-steht, und notieren. Achte auch darauf, wie lange es nach dem Verstellen dauert, bis die
-Temperatur überhaupt reagiert (Totzeit).
+Mit vollem Ventilweg wird der Smoker weit über 250 °C heiß. Zum Smoken (110–150 °C) ist das zu
+viel Weg: Jeder Prozentschritt bewirkt dann zu viel, und die Temperatur schwingt. Ziel ist:
+**Bei 100 % erreicht der Smoker etwa 200–220 °C.** Das ist genug Reserve für Anheizen, Wind und
+Deckel, und jeder Schritt wird feiner.
 
-- Gut ist: 110 °C liegt grob bei 10–30 %, 150 °C deutlich darüber.
-- Ist der Smoker schon bei 0 % über 110 °C, ist `SPmin` zu weit offen. Dann ist 110 °C nicht
-  regelbar.
-- Erreicht er schon bei 25 % deine Höchsttemperatur, kannst du `SPmax` Richtung KLEIN
-  verkleinern. Dann bewirkt jeder Prozentschritt weniger, und die Kurve wird ruhiger. Das
-  Anheizen dauert dann aber etwas länger.
+1. Pitmaster *manuell* **50 %**, Deckel zu, 25–30 min warten, bis die Temperatur steht.
+   - etwa 200–220 °C: Testwert 0,5 passt
+   - deutlich über 220 °C: mit 35 % wiederholen, unter 190 °C: mit 65 %
+2. Neuer Wert: **SPmax = SPmin + (SPmax − SPmin) × Testwert**
+   (Beispiel: SPmin 5, SPmax 60, gut bei 50 % → 5 + 55 × 0,5 = 32,5). Eintragen, *Speichern*.
+3. Wird `SPmax` später noch einmal geändert: Autotune wiederholen und auf der Pitmaster-Seite
+   „Gelerntes zurücksetzen“, denn Regelwerte und gelernte Ventilstellungen gelten nur für
+   diesen Weg.
 
-Diese Werte sind auch für die spätere Auswertung wertvoll. Schreib sie auf oder lass die
-Telemetrie laufen (Abschnitt 8).
+Ein begrenzter `SPmax` hält den Servo außerdem sicher weg von GROSS und damit von AUS.
 
 **Schritt 5 – Autotune**
 
