@@ -154,22 +154,77 @@ IPv6, das Ergebnis sagt über den WLANThermo (nur IPv4) wenig.
 
    `wlt-update` brauchst du nur noch als Telemetrie-Logger (Abschnitt 8).
 
-## 6. Servo kalibrieren und Autotune
+## 6. Servo einrichten und Autotune
 
-1. *Pitmaster* → Profil **„Gas Servo“** wählen → Stift-Symbol (Profil bearbeiten).
-2. Servo montieren. Mit dem Duty-Cycle-Test des Profils `SPmin` (= kleinste Stufe) und `SPmax`
-   (= große Flamme) einstellen. Der Servo darf an beiden Enden nicht gegen den Anschlag drücken.
-3. **Mindestausgang** setzen. Bei 110 °C steht der Regler sehr nahe an der kleinsten Stufe, deshalb
-   zuerst 0–3 % wählen und nur bei Wind erhöhen. Liegt er zu hoch, ist der Sollwert nicht
-   erreichbar.
-4. „Flammenausfall-Erkennung“ ist im Gas-Profil an (15 °C in 300 s). „Deckelüberwachung“ an lassen.
-5. Pitmaster auf **auto**, Kanal des Garraumfühlers, Soll **130 °C** → *Speichern*.
-6. *Autotune starten*. Die Karte zeigt die Phase (Anfahren, Relay), den Zyklus x/8 und die
-   Laufzeit. Erfahrungsgemäß dauert es 20–60 min. Deckel geschlossen halten, **dabeibleiben**.
-7. Danach stehen Kp/Ki/Kd im Profil und der Pitmaster regelt weiter. Bei jedem Abbruch
+Servo und Gestänge entscheiden darüber, wie ruhig die Temperatur später läuft. Die Regelung kann nur
+so fein sein wie die Mechanik.
+
+**Vorab wissen**
+
+- Der Servo wird über den **Handbetrieb** des Pitmasters bewegt (Pitmaster → Typ *manuell*,
+  Wert in %). Der Wert läuft von `SPmin` (0 %) bis `SPmax` (100 %). Im Profil sind das
+  zunächst 0 und 100, also der volle Servoweg von 550 bis 2250 µs.
+- `SPmin`/`SPmax` kannst du in % des Servowegs (0–100) oder direkt in µs (550–2250)
+  eintragen.
+- Ist `SPmin` größer als `SPmax`, dreht der Servo andersherum. So passt die Richtung zum Ventil,
+  egal wie er eingebaut ist.
+- **Beim Einschalten fährt der Servo sofort auf den Mindestausgang**, also auf `SPmin`. Mit den
+  Werkswerten ist das ein Ende des Servowegs. Darum: **Gestänge erst ankuppeln, wenn `SPmin`
+  und `SPmax` gespeichert sind.**
+
+**Schritt 1 – Ventil verstehen (ohne Gas, Flasche zu)**
+
+- Von Hand drehen: In welcher Reihenfolge kommen *AUS*, *GROSS* und *KLEIN*? Bei vielen
+  Gasventilen geht es AUS → GROSS → KLEIN. Wo liegen die Anschläge, muss man zum Drehen drücken?
+- Der Servo arbeitet **nur zwischen GROSS und KLEIN**. Er darf *AUS* nie erreichen. Sonst wäre die
+  Flamme aus, und beim Zurückdrehen strömt Gas ohne Flamme (keine Zündsicherung!).
+
+**Schritt 2 – Servo-Positionen finden (Gestänge abgekuppelt)**
+
+1. Profil „Gas Servo“, Pitmaster auf *manuell*. Mit dem Wert in kleinen Schritten den Servo
+   bewegen und schauen, welche Hebelstellung zu welchem Wert gehört.
+2. Hebel/Kupplung so montieren, dass der Bereich GROSS…KLEIN in der Mitte des Servowegs liegt,
+   mit Luft zu beiden Enden. Kupplung **spielfrei** (kein Rutschen, kein Wackeln), Servo fest
+   verschraubt. Spiel im Gestänge macht die Kurve später unruhig.
+3. Die Werte für *KLEIN* und *GROSS* knapp vor den Anschlägen notieren und als `SPmin` (KLEIN)
+   und `SPmax` (GROSS) eintragen → *Speichern*. Danach erst ankuppeln. Prüfen: Wert 0 % =
+   KLEIN, 100 % = GROSS, an keinem Ende drückt der Servo gegen den Anschlag (kein Brummen).
+
+**Schritt 3 – Mit Flamme feinjustieren (Deckel offen, dabeibleiben)**
+
+1. Gas auf, von Hand zünden, Pitmaster *manuell* 100 % → große Flamme ok?
+2. Langsam auf 0 % zurück. Brennt die Flamme bei 0 % stabil, auch bei einem Windstoß? Wenn nicht,
+   `SPmin` etwas Richtung GROSS verschieben, bis sie sicher brennt. Das ist die wichtigste
+   Einstellung: Die Regelung geht nie unter diesen Punkt.
+3. `Mindestausgang` im Profil auf 0 lassen. `SPmin` ist ja schon die kleinste sichere Flamme.
+
+**Schritt 4 – Kennlinie grob prüfen (Deckel zu, je Punkt ca. 20–30 min)**
+
+Pitmaster *manuell*, nacheinander 0 %, 25 % und 50 %. Jeweils warten, bis die Temperatur
+steht, und notieren. Achte auch darauf, wie lange es nach dem Verstellen dauert, bis die
+Temperatur überhaupt reagiert (Totzeit).
+
+- Gut ist: 110 °C liegt grob bei 10–30 %, 150 °C deutlich darüber.
+- Ist der Smoker schon bei 0 % über 110 °C, ist `SPmin` zu weit offen. Dann ist 110 °C nicht
+  regelbar.
+- Erreicht er schon bei 25 % deine Höchsttemperatur, kannst du `SPmax` Richtung KLEIN
+  verkleinern. Dann bewirkt jeder Prozentschritt weniger, und die Kurve wird ruhiger. Das
+  Anheizen dauert dann aber etwas länger.
+
+Diese Werte sind auch für die spätere Auswertung wertvoll. Schreib sie auf oder lass die
+Telemetrie laufen (Abschnitt 8).
+
+**Schritt 5 – Autotune**
+
+1. „Flammenausfall-Erkennung“ ist im Gas-Profil an (15 °C in 300 s). „Deckelüberwachung“ an lassen.
+2. Pitmaster auf **auto**, Kanal des Garraumfühlers, Soll **130 °C** → *Speichern*.
+3. *Autotune starten*. Die Karte zeigt die Phase (Anfahren, Relay), den Zyklus x/8 und die
+   Laufzeit. Erfahrungsgemäß dauert es 20–60 min. Deckel geschlossen halten, **dabeibleiben**. Ohne Grillgut, aber
+   mit Wasserschale, falls du sie sonst auch benutzt.
+4. Danach stehen Kp/Ki/Kd im Profil und der Pitmaster regelt weiter. Bei jedem Abbruch
    (Übertemperatur, Fühler weg, Stopp) fährt der Servo auf den Mindestausgang und der Pitmaster
    geht aus.
-8. **Den Autotune machst du einmal**, nicht bei jedem Grillabend. Wiederholen nur nach einer
+5. **Den Autotune machst du einmal**, nicht bei jedem Grillabend. Wiederholen nur nach einer
    Änderung an Servo, Gestänge oder Gasregler. Mit „Intelligente Regelung“ (im Gas-Profil an)
    lernt das Gerät danach bei jedem Grillabend selbst, welche Öffnung es für welche Temperatur
    braucht. Die Anzahl gelernter Punkte steht auf der Pitmaster-Seite. Details und Messwerte:
