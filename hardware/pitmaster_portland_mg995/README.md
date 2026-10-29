@@ -66,6 +66,15 @@ Die STLs liegen schon in Druckorientierung vor. Alle drei Teile drucken ohne St�
 - 0,15–0,2 mm Schichthöhe, 35 % Infill, 3–4 Perimeter (der Servo hat ~5× mehr Kraft als der SG90).
 - Material: PETG oder ASA. PLA wird in der Nähe der Brennkammer weich.
 
+## Laut AZ-Delivery-Datenblatt (AZ225)
+
+- Abmessungen nur grob: 40 × 19 × 42 mm. Eine Maßzeichnung gibt es nicht, deshalb bleibt die Messliste oben nötig.
+- Zubehör: Kreuzhorn (4 Arme), Doppelarm, Rundscheibe, Stern (6 Arme), 4 Gummitüllen, 4 Messinghülsen, 4 Befestigungsschrauben, 1 Hornschraube.
+- Kabel: braun = GND, rot = VCC, orange = Signal. 4,8–7,2 V.
+- Betriebstemperatur nur **0–55 °C**: Das Gehäuse darf am Grill nicht heiß werden.
+- Drehwinkel: Die Tabelle sagt 120°, der Text 180°. Die Endlagen deshalb am Ventil ausprobieren.
+- **Gummitüllen weglassen:** Der Servo wird direkt auf die Platte geschraubt. Mit Tüllen hat er Spiel, und `TAB_TO_HORN` verschiebt sich um die Tüllendicke.
+
 ## Stückliste
 
 - 1× MG995 mit Kreuzhorn (Zubehör)
