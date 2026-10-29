@@ -16,7 +16,7 @@ Verbesserungen vor. Arbeite nur lesend. Ich entscheide über jede Änderung und 
 ## Kontext
 
 - **Repo:** https://github.com/allgrinder/WLANThermo_ESP32_Softwareclaude, Branch
-  `feature/gas-servo-autotune` (lokal klonen, falls nicht vorhanden).
+  `feature/gas-smart-control` (lokal klonen, falls nicht vorhanden).
 - **Gerät:** WLANThermo Nano V3, Firmware `v1.2.4-gas.N`, WebUI/API `http://192.168.178.147`.
 - **Logger:** Container `wlt-update` auf Unraid, `http://192.168.178.250`. Sessions:
   `/sessions`, Telemetrie `/sessions/<id>.csv` (1 s), Cloud-Daten `/sessions/<id>/cloud.csv` (30 s).
