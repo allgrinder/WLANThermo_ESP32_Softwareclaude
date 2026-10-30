@@ -35,7 +35,8 @@ GasSmokerPlant::GasSmokerPlant(const PlantParams &params, double startTemp, uint
 
 double GasSmokerPlant::steadyState(double opening) const
 {
-  double u = std::min(100.0, std::max(0.0, opening)) / 100.0;
+  double sat = (p.valveSat > 0 && p.valveSat < 100) ? p.valveSat : 100.0;
+  double u = std::min(sat, std::max(0.0, opening)) / sat;
   return p.tMin + (p.tMax - p.tMin) * pow(u, p.valveExp);
 }
 

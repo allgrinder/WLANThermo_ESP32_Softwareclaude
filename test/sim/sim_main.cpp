@@ -92,6 +92,7 @@ static PlantParams makePlant(const char *name, double L, double tau, double tMin
   p.tMin = tMin;
   p.tMax = tMax;
   p.valveExp = 0.5;
+  p.valveSat = 100;
   p.tauSensorS = sensorLag;
   p.noise = 0.3;
   p.tauLidS = 90;
@@ -922,7 +923,7 @@ int main(int argc, char **argv)
     std::string arg = argv[i];
     if (arg == "--plant" && (i + 1) < argc)
     {
-      // fitted plant from tools/fit_plant.py: name L tau tMin tMax sensorLag valveExp
+      // fitted plant from tools/fit_plant.py: name L tau tMin tMax sensorLag valveExp [valveSat]
       std::ifstream f(argv[++i]);
       PlantParams p;
       f >> p.name >> p.deadTimeS >> p.tauS >> p.tMin >> p.tMax >> p.tauSensorS >> p.valveExp;
@@ -930,7 +931,12 @@ int main(int argc, char **argv)
       p.noise = 0.3;
       p.tauLidS = 90;
       if (f)
+      {
+        // older plant files end after valveExp
+        if (!(f >> p.valveSat))
+          p.valveSat = 100;
         plants.push_back(p);
+      }
       else
         std::cerr << "cannot read plant file" << std::endl;
     }

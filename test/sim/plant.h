@@ -20,7 +20,9 @@
 //           (u = 0) and "big flame" (u = 100). Heat power is not linear:
 //           Tss(u) = tAmb + (tMin - tAmb) + (tMax - tMin) * (u/100)^valveExp
 //           with valveExp = 0.5 (sqrt): close to the smallest stage a small
-//           servo move changes a lot.
+//           servo move changes a lot. Above valveSat more opening brings no
+//           more heat (u is scaled by valveSat and capped), as measured on the
+//           El Fuego with water pan (docs/cooks/2026-10-30).
 //  chamber: first order with time constant tau and dead time L (FOPDT)
 //           tau * dT/dt = Tss(u(t - L)) - T
 //  sensor:  first order lag tauSensor, noise +-noise (uniform)
@@ -42,6 +44,7 @@ struct PlantParams
   double tMin;       // steady state temperature at the smallest stage
   double tMax;       // steady state temperature with big flame
   double valveExp;   // valve characteristic exponent
+  double valveSat;   // opening in % from which on the heat saturates (100 = no saturation)
   double tauSensorS; // sensor lag
   double noise;      // +- uniform measurement noise
   double tauLidS;    // time constant towards ambient while the lid is open
