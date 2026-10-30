@@ -51,3 +51,37 @@ Handbetrieb mit festen Servo-Stufen, um die Strecke zu vermessen. Kein Grillgut.
   ganzen Regelweg nutzt.
 - Vor dem Autotune prüfen, ob die Flammenausfall-Erkennung nach Schritten nach unten
   (Relay-Autotune, Sollwert senken) Fehlalarme auslöst.
+
+## Streckenmodell aus diesem Lauf
+
+`tools/fit_plant.py --csv fit_mit_wasser_5s.csv --fix tMin=95` (nur der Teil mit Wasser,
+20:38–22:05; das Modell kennt keine Wasserschale):
+
+| Parameter | Wert | Bemerkung |
+|---|---|---|
+| Totzeit L | 63 s | nur L + Fühler (≈ 68 s) ist belastbar |
+| τ Garraum | 272 s | |
+| tMin (0 %) | 95 °C | festgesetzt: ohne 0 %-Phase mit Wasser nicht bestimmbar (25,8 °C passt genauso gut, ist aber unplausibel) |
+| tMax | 180 °C | |
+| valveExp | 2,54 | unten flach: zwischen 0 und ~25 % tut sich wenig |
+| valveSat | 51 % | darüber keine Mehrleistung |
+| Fühler | 4,7 s | |
+
+RMSE 1,4 °C (vorher ohne Sättigung 12,5 °C; P1–P3: 23–58 °C). Dateien:
+`test/sim/plants/elfuego-2026-10-30.plant` (SPmax 45) und `…-sp25.plant` (gleiche Strecke für
+SPmax 25: valveSat 51 % × 45/25 = 92 %).
+
+## Simulation der Firmware mit diesem Modell (CI, `make -C test/sim plants`)
+
+| Modell | Modus | 110 °C | 150 °C |
+|---|---|---|---|
+| SPmax 45 | alt | hält ±1,3 °C, Sprung +20 ok, Flamme aus nach 222 s | hält nur ±4,2 °C |
+| SPmax 45 | smart | hält ±15 °C, Deckel-Fehlalarm | Überschwingen 9,5 °C |
+| SPmax 25 | alt | hält ±0,7 °C, Flamme aus nach 129 s, Autotune 62,6 min | Autotune bricht ab (Fehler 9) |
+| SPmax 25 | smart | hält ±0,6 °C, Überschwingen 3,9 °C | Autotune bricht ab (Fehler 9) |
+
+- SPmax 25 verbessert die Regelung deutlich; mit SPmax 45 versagt vor allem der Smart-Modus.
+- Autotune bei 150 °C mit SPmax 25: Die Bias-Schätzung bleibt bei 50 %, das Relais (±20 %)
+  erreicht 150 °C nicht (Strecke braucht dort ≈ 78 %), Abbruch „keine Schwingung“. Autotune
+  deshalb vorerst bei 110–130 °C machen. Bei 130 °C reicht das Relais rechnerisch (50 ± 20 % →
+  100–137 °C), in der Simulation ist 130 °C aber noch nicht gerechnet.
