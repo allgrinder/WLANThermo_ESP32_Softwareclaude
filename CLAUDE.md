@@ -44,14 +44,18 @@ Sprache mit dem Nutzer: Deutsch. Code-Kommentare: Englisch, wie im Upstream.
   Boot-Parken, Task-Watchdog, Flammenausfall-Erkennung, Server-Antwort-Policy, Telemetrie,
   `/fwupload`, intelligente Regelung (lernende Vorsteuerung `BiasMap`, Anti-Windup,
   D auf Messung).
-- Servo-Kalibrierung und erster Autotune am echten Smoker stehen noch aus
-  (`docs/INSTALL-GAS.md` Abschnitt 6, nur mit dem Nutzer am Smoker).
+- Servo kalibriert (Profil 4: SPmin 0, SPmax 45, 1,8°/%), Stufentest am 2026-10-30 gemacht:
+  `docs/cooks/2026-10-30/README.md`. Ventil sättigt ab ~50 %; vereinbart: **SPmax 45 → 25**
+  (noch nicht gesetzt, Gerät war aus). Web-Passwort ist entfernt, Nutzer setzt ein neues.
+- Erster Autotune am echten Smoker steht noch aus (nur mit dem Nutzer am Smoker).
 
 ## Bauen und testen
 
 - Firmware: PlatformIO, nur env `nanoV3` (`pio run -e nanoV3`). CI: `.github/workflows/gas-ci.yml`.
 - Host-Simulation (kompiliert die echte `src/pitmaster/*` gegen Arduino-Stubs):
   `make -C test/sim test` (alter Modus, Smart-Modus und Unit-Tests). Muss vor jedem Release grün sein.
+  `make -C test/sim plants` rechnet die gemessenen Strecken aus `test/sim/plants/` (informativ,
+  in CI als Annotation lesbar). Lokal unter Windows gibt es keinen C++-Compiler; CI nutzen.
 - Update-Server: `update-server/wlt-update` (pytest in `tests/`),
   Integrationstest `update-server/test/run_integration.sh` (Docker).
 - WebUI: `webui/` (Vue). Nach Änderungen `webui/dist/nano/index.html.gz` neu bauen und mit committen.
@@ -71,8 +75,14 @@ Sprache mit dem Nutzer: Deutsch. Code-Kommentare: Englisch, wie im Upstream.
 
 ## Offene Punkte
 
-1. Erster echter Grillabend mit Telemetrie → `tools/analyze_cook.py`, dann
-   `tools/fit_plant.py` (Modell an den El Fuego anpassen) und die Simulation damit neu rechnen.
-   Die Simulationsparameter (P1–P3) sind bisher Annahmen, keine Messung.
-2. Danach neu bewerten: Ventil-Linearisierung (offen), Bremspunkt beim Anheizen (in der
-   Simulation verworfen, schlechter bei Sollsprüngen).
+1. Morgen mit dem Nutzer: SPmax 25 setzen, Autotune bei 110–130 °C, nicht 150 °C (in der
+   Simulation mit dem gemessenen Modell bricht der Autotune bei 150 °C ab: Bias-Schätzung bleibt
+   bei 50 %, Relais erreicht den Sollwert nicht, Fehler 9). Vorher 130 °C mit
+   `elfuego-2026-10-30-sp25` simulieren.
+2. Autotune robuster für die gemessene Strecke (Bias-Schätzung bei hohem Sollwert) und
+   Smart-Modus mit SPmax 45 (hält nur ±15 °C) untersuchen.
+3. Nach jedem Grillabend: Daten (5 s) → `tools/fit_plant.py` → Modell in `test/sim/plants`
+   verfeinern. Offen am Modell: tMin mit Wasser (festgesetzt 95 °C), Wasserschale als
+   Störung (hält ~1,5 h, ohne Wasser deutlich heißer).
+4. Neu bewerten: Ventil-Linearisierung (Messung spricht dafür, SPmax 25 ist der einfache
+   Schritt), Bremspunkt beim Anheizen (in der Simulation verworfen).
