@@ -19,7 +19,8 @@ jobs:
       - name: Fitted plants of real cooks (informational)
         if: always()
         run: |
-          make -C test/sim plants
+          make -C test/sim plants | tee plants.txt
+          { echo '```'; cat plants.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
