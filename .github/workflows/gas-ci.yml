@@ -21,6 +21,14 @@ jobs:
         run: |
           make -C test/sim plants | tee plants.txt
           { echo '```'; cat plants.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          # one annotation per plant and mode (annotations are readable without sign-in)
+          python3 - <<'EOF'
+          for block in open("plants.txt").read().split("=== ")[1:]:
+              title, _, body = block.partition("\n")
+              keep = [l.strip() for l in body.splitlines() if "FAIL" in l or "PASSED" in l or l.startswith("|")]
+              msg = "\n".join(keep).replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              print(f"::notice title={title}::{msg[:4000]}")
+          EOF
       - uses: actions/upload-artifact@v4
         if: always()
         with:
