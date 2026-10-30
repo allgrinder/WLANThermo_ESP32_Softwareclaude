@@ -200,13 +200,13 @@ def main():
         os.makedirs(simout, exist_ok=True)
         run = subprocess.run([os.path.join(root, "gas_sim"), simout, "--plant", plant_file],
                              capture_output=True, text=True)
-        with open(os.path.join(simout, "summary.md")) as f:
+        with open(os.path.join(simout, "summary.md"), encoding="utf-8") as f:
             table = f.read()
         fails = [l for l in run.stdout.splitlines() if "FAIL" in l]
         md += ["## Simulator mit dem angepassten Modell", "",
                "Alle Szenarien (P1-P3 und das angepasste Modell, letzte Zeilen).", "", table, "",
                "Fehlgeschlagene Prüfungen: " + (", ".join(fails) if fails else "keine"), ""]
-    with open(os.path.join(args.out, args.name + ".md"), "w") as f:
+    with open(os.path.join(args.out, args.name + ".md"), "w", encoding="utf-8") as f:
         f.write("\n".join(md))
     print(json.dumps(result, indent=1))
 

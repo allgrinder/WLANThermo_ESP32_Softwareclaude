@@ -37,7 +37,7 @@ def fetch(url):
 
 def load(args):
     if args.csv:
-        with open(args.csv) as f:
+        with open(args.csv, encoding="utf-8") as f:
             text = f.read()
     else:
         text = fetch(f"{args.logger.rstrip('/')}/sessions/{args.session}.csv")
@@ -354,9 +354,9 @@ def main():
     source, d = load(args)
     m = analyze(d)
     plot(d, m, os.path.join(args.out, "cook.png"))
-    with open(os.path.join(args.out, "metrics.json"), "w") as f:
+    with open(os.path.join(args.out, "metrics.json"), "w", encoding="utf-8") as f:
         json.dump(m, f, indent=1)
-    with open(os.path.join(args.out, "report.md"), "w") as f:
+    with open(os.path.join(args.out, "report.md"), "w", encoding="utf-8") as f:
         f.write(report(m, source, args.title))
     print(f"report: {os.path.join(args.out, 'report.md')}")
 
