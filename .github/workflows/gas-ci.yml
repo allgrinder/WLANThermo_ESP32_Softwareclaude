@@ -16,6 +16,10 @@ jobs:
       - name: Build and run simulator tests
         run: |
           make -C test/sim test
+      - name: Fitted plants of real cooks (informational)
+        if: always()
+        run: |
+          make -C test/sim plants
       - uses: actions/upload-artifact@v4
         if: always()
         with:

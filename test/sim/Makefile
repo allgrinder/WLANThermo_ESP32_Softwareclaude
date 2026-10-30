@@ -28,7 +28,21 @@ test: gas_sim unit_policy
 	mkdir -p out/smart
 	./gas_sim out/smart --smart
 
+# fitted plants of real cooks (tools/fit_plant.py), informational: prints the
+# checks and summary rows of each fitted plant, does not fail
+plants: gas_sim
+	@for f in plants/*.plant; do \
+	  n=$$(basename $$f .plant); \
+	  for mode in "" "--smart"; do \
+	    o=out/plants/$$n$${mode:+-smart}; mkdir -p $$o; \
+	    ./gas_sim $$o --plant $$f $$mode > $$o/log.txt 2>&1; rc=$$?; \
+	    echo "=== $$n $${mode:-old} (exit $$rc)"; \
+	    grep -E "FAIL|ok: +$$n|ALL PASSED" $$o/log.txt || true; \
+	    grep -E "^\| ($$n|Szenario)" $$o/summary.md || true; \
+	  done; \
+	done
+
 clean:
 	rm -rf gas_sim unit_policy out
 
-.PHONY: all test clean
+.PHONY: all test plants clean
