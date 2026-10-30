@@ -7,13 +7,16 @@ cook session and stores it as a new simulator scenario.
     python3 tools/fit_plant.py --csv session.csv --name elfuego --out test/sim/plants
 
 Model (same as plant.cpp):
-    Tss(u)   = tMin + (tMax - tMin) * (u/100)^valveExp      u = servo opening %
+    Tss(u)   = tMin + (tMax - tMin) * (min(u, valveSat)/valveSat)^valveExp
+                                                     u = servo opening %
     chamber: tau * dT/dt = Tss(u(t - L)) - T
     sensor:  first order lag tauSensor
-Fitted: L, tau, tMin, tMax, valveExp, tauSensor. Lid and flame out phases are
+Fitted: L, tau, tMin, tMax, valveExp, valveSat, tauSensor. Lid and flame out phases are
 left out (the model has no lid). Heat up (100 %) and the autotune relay are the
 best excitation for the valve curve and should be part of the session. Each clean segment of at least
-20 min is simulated from its measured start value.
+20 min is simulated from its measured start value. Besides the logger telemetry
+a cloud format CSV works if it is sampled every 10 s or faster (e.g. a recorder
+polling /data every 5 s).
 
 Writes <out>/<name>.plant (input for: test/sim/gas_sim --plant <file>),
 <out>/<name>.json and <out>/<name>_fit.png. With --simulate the simulator is
@@ -31,11 +34,13 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import analyze_cook  # noqa: E402
 
-PARAMS = ["deadTimeS", "tauS", "tMin", "tMax", "valveExp", "tauSensorS"]
+PARAMS = ["deadTimeS", "tauS", "tMin", "tMax", "valveExp", "tauSensorS", "valveSat"]
 BOUNDS = {"deadTimeS": (5, 180), "tauS": (60, 1800), "tMin": (25, 200), "tMax": (120, 400),
-          "valveExp": (0.2, 1.5), "tauSensorS": (2, 120)}
+          "valveExp": (0.2, 3.0), "tauSensorS": (2, 120), "valveSat": (20, 100)}
 REFERENCE = {  # simulator sets P1-P3 (docs/autotune-simulation.md)
-    "P1": [20, 240, 70, 220, 0.5, 10], "P2": [40, 420, 75, 250, 0.5, 20], "P3": [60, 600, 80, 280, 0.5, 30]}
+    "P1": [20, 240, 70, 220, 0.5, 10, 100], "P2": [40, 420, 75, 250, 0.5, 20, 100],
+    "P3": [60, 600, 80, 280, 0.5, 30, 100]}
+MAX_CLOUD_STEP_S = 10.0
 T_AMB = 20.0
 STEP_S = 5.0
 
@@ -60,8 +65,14 @@ def resample(d, step=STEP_S):
     for a, _ in analyze_cook.edges(d["fo"]):
         bad[max(0, a - int(900 / dt)):] = True
     out["bad"] = np.bincount(idx, weights=bad, minlength=n) > 0
+    # empty bins (sample interval a bit above STEP_S, short gaps) keep the last
+    # opening; 0 % there would feed the model short false gas cuts
+    u = out["out"].copy()
+    for k in range(1, len(u)):
+        if np.isnan(u[k]):
+            u[k] = u[k - 1]
     # the servo moves in whole percent (Arduino map() on long)
-    out["u"] = np.floor(np.nan_to_num(out["out"], nan=0.0))
+    out["u"] = np.floor(np.nan_to_num(u, nan=0.0))
     return out
 
 
@@ -71,7 +82,7 @@ def segments(r, min_len_s=1200):
 
 
 def simulate(p, u, x0, step=STEP_S):
-    L, tau, tmin, tmax, vexp, tsen = p
+    L, tau, tmin, tmax, vexp, tsen, vsat = p
     n = len(u)
     delay = max(1, int(round(L / step)))
     chamber = sensor = x0
@@ -79,8 +90,8 @@ def simulate(p, u, x0, step=STEP_S):
     span = tmax - tmin
     for k in range(n):
         uk = u[k - delay] if k >= delay else u[0]
-        uk = 0.0 if uk < 0 else (100.0 if uk > 100 else uk)
-        target = tmin + span * (uk / 100.0) ** vexp
+        uk = 0.0 if uk < 0 else (vsat if uk > vsat else uk)
+        target = tmin + span * (uk / vsat) ** vexp
         chamber += step * (target - chamber) / tau
         sensor += step * (chamber - sensor) / tsen
         y[k] = sensor
@@ -99,12 +110,28 @@ def cost(p, r, segs):
         y = simulate(p, r["u"][a:b], r["temp"][a])
         e = y - r["temp"][a:b]
         e = e[~np.isnan(e)]
-        err += float(np.sum(e * e))
+        with np.errstate(over="ignore", invalid="ignore"):
+            err += float(np.sum(e * e))
         n += len(e)
+    if not math.isfinite(err):
+        return 1e9
     return math.sqrt(err / max(n, 1))
 
 
-def fit(r, segs):
+def fit(r, segs, fixed=None):
+    """fixed: {param: value} for parameters the session can't determine
+    (e.g. tMin without a phase at the smallest stage)"""
+    fixed = fixed or {}
+    free = [k for k, name in enumerate(PARAMS) if name not in fixed]
+
+    def full(x):
+        p = np.array([fixed.get(name, 0.0) for name in PARAMS], float)
+        p[free] = x
+        return p
+
+    def cost_free(x):
+        return cost(full(x), r, segs)
+
     try:
         from scipy.optimize import minimize
     except ImportError:  # pragma: no cover
@@ -112,14 +139,19 @@ def fit(r, segs):
     best = None
     starts = list(REFERENCE.values())
     # start value for the steady state curve from the data
-    starts.append([30, 400, float(np.nanpercentile(r["temp"], 10)) - 10, float(np.nanmax(r["temp"])) + 40, 0.5, 20])
+    lo, hi = float(np.nanpercentile(r["temp"], 10)) - 10, float(np.nanmax(r["temp"]))
+    starts.append([30, 400, lo, hi + 40, 0.5, 20, 100])
+    for sat in (40, 60):  # saturating valve (El Fuego 2026-10-30)
+        for vexp in (0.5, 1.5):
+            starts.append([30, 400, lo, hi, vexp, 20, sat])
     for x0 in starts:
+        x0 = np.array(x0, float)[free]
         if minimize is not None:
-            res = minimize(cost, np.array(x0, float), args=(r, segs), method="Nelder-Mead",
+            res = minimize(cost_free, x0, method="Nelder-Mead",
                            options={"maxiter": 1500, "xatol": 0.05, "fatol": 0.001, "adaptive": True})
-            cand = (res.fun, res.x)
+            cand = (res.fun, full(res.x))
         else:
-            cand = (cost(x0, r, segs), np.array(x0, float))
+            cand = (cost_free(x0), full(x0))
         if best is None or cand[0] < best[0]:
             best = cand
     return best
@@ -159,27 +191,36 @@ def main():
     ap.add_argument("--name", default="fitted")
     ap.add_argument("--out", default="test/sim/plants")
     ap.add_argument("--simulate", action="store_true", help="run test/sim/gas_sim with the fitted plant")
+    ap.add_argument("--fix", action="append", default=[], metavar="NAME=VALUE",
+                    help="keep a parameter at a value, e.g. --fix tMin=103 (repeatable)")
     args = ap.parse_args()
+    fixed = {}
+    for item in args.fix:
+        name, _, value = item.partition("=")
+        if name not in PARAMS:
+            ap.error(f"--fix: unknown parameter {name}, one of {', '.join(PARAMS)}")
+        fixed[name] = float(value)
     if not args.csv and args.session is None:
         ap.error("--session or --csv required")
     os.makedirs(args.out, exist_ok=True)
 
     source, d = analyze_cook.load(args)
-    if source != "telemetry":
+    step = float(np.median(np.diff(d["ts"]))) if len(d["ts"]) > 1 else math.inf
+    if source != "telemetry" and step > MAX_CLOUD_STEP_S:
         raise SystemExit("fit needs telemetry data (1-5 s), the cloud data (30 s) is too coarse")
     r = resample(d)
     segs = segments(r)
     if not segs:
         raise SystemExit("no clean segment of at least 20 min")
-    rmse, p = fit(r, segs)
+    rmse, p = fit(r, segs, fixed)
     params = dict(zip(PARAMS, [round(float(v), 3) for v in p]))
-    result = {"name": args.name, "rmse": round(rmse, 3), "params": params,
+    result = {"name": args.name, "rmse": round(rmse, 3), "params": params, "fixed": sorted(fixed),
               "segments_min": [round((b - a) * STEP_S / 60.0, 1) for a, b in segs],
               "reference_rmse": {k: round(cost(v, r, segs), 3) for k, v in REFERENCE.items()}}
 
     plant_file = os.path.join(args.out, args.name + ".plant")
     with open(plant_file, "w") as f:
-        f.write(f"{args.name} {p[0]:.1f} {p[1]:.1f} {p[2]:.1f} {p[3]:.1f} {p[5]:.1f} {p[4]:.3f}\n")
+        f.write(f"{args.name} {p[0]:.1f} {p[1]:.1f} {p[2]:.1f} {p[3]:.1f} {p[5]:.1f} {p[4]:.3f} {p[6]:.1f}\n")
     with open(os.path.join(args.out, args.name + ".json"), "w") as f:
         json.dump(result, f, indent=1)
     plot(r, segs, p, os.path.join(args.out, args.name + "_fit.png"))
