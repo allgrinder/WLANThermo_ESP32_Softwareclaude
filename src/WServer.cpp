@@ -30,6 +30,8 @@
 #include "Settings.h"
 #include "RecoveryMode.h"
 #include <SPIFFS.h>
+#include <Update.h>
+#include "ArduinoLog.h"
 
 // include html files
 #include "webui/restart.html.gz.h"
@@ -56,6 +58,48 @@ const char *vueRouterPaths[WEB_VUE_ROUTER_PATHS_MAX] = {
 
 const char *WServer::username = "admin";
 String WServer::password = "";
+
+// direct firmware upload (gas fork), see docs/INSTALL-GAS.md
+static boolean fwUploadActive = false;
+static boolean fwUploadOk = false;
+static String fwUploadError = "";
+
+static const char fwUploadForm[] PROGMEM =
+    "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'>"
+    "<title>Firmware hochladen</title></head><body style='font-family:sans-serif;max-width:40em;margin:1em'>"
+    "<h2>Firmware hochladen</h2>"
+    "<p>Datei <b>nanoV3.bin</b> aus dem GitHub-Release w&auml;hlen. Der Pitmaster muss <b>aus</b> sein. "
+    "Das Ger&auml;t startet danach neu.</p>"
+    "<form method='POST' action='/fwupload' enctype='multipart/form-data'>"
+    "<input type='file' name='firmware' accept='.bin'><br><br>"
+    "<input type='submit' value='Hochladen'></form></body></html>";
+
+static boolean fwUploadAllowed(String &reason)
+{
+  if (false == WServer::requireAuth())
+  {
+    reason = "Kein Web-Passwort gesetzt. Bitte zuerst unter /setadmin ein Passwort setzen.";
+    return false;
+  }
+
+  for (uint8_t i = 0u; i < gSystem->pitmasters.count(); i++)
+  {
+    Pitmaster *pm = gSystem->pitmasters[i];
+    if ((pm != NULL) && ((pm->getType() != pm_off) || pm->isAutoTuneRunning()))
+    {
+      reason = "Pitmaster ist aktiv. Bitte zuerst ausschalten.";
+      return false;
+    }
+  }
+
+  if (gSystem->otaUpdate.isUpdateInProgress())
+  {
+    reason = "Es laeuft bereits ein Update.";
+    return false;
+  }
+
+  return true;
+}
 
 WServer::WServer() : webServer(80)
 {
@@ -136,6 +180,101 @@ void WServer::init()
              gSystem->restart();
            })
       .setFilter(ON_STA_FILTER);
+
+  // firmware upload: always password protected, only with pitmaster off
+  webServer.on("/fwupload", HTTP_GET, [](AsyncWebServerRequest *request) {
+    String reason;
+    if (false == WServer::requireAuth())
+    {
+      request->send(403, TEXTPLAIN, "Kein Web-Passwort gesetzt. Bitte zuerst unter /setadmin ein Passwort setzen.");
+      return;
+    }
+    if (!request->authenticate(WServer::getUsername().c_str(), WServer::getPassword().c_str(), WServer::getRealm()))
+    {
+      request->requestAuthentication(WServer::getRealm());
+      return;
+    }
+    request->send_P(200, "text/html", fwUploadForm);
+  });
+
+  webServer.on(
+      "/fwupload", HTTP_POST,
+      [](AsyncWebServerRequest *request) {
+        if ((false == WServer::requireAuth()) ||
+            !request->authenticate(WServer::getUsername().c_str(), WServer::getPassword().c_str(), WServer::getRealm()))
+        {
+          request->requestAuthentication(WServer::getRealm());
+          return;
+        }
+
+        if (fwUploadOk)
+        {
+          request->send(200, TEXTPLAIN, "Firmware OK. Neustart...");
+          gSystem->restart();
+        }
+        else
+        {
+          request->send(400, TEXTPLAIN, String("Upload fehlgeschlagen: ") + fwUploadError);
+        }
+      },
+      [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+        if (0u == index)
+        {
+          fwUploadOk = false;
+          fwUploadActive = false;
+          fwUploadError = "";
+
+          if ((false == WServer::requireAuth()) ||
+              !request->authenticate(WServer::getUsername().c_str(), WServer::getPassword().c_str(), WServer::getRealm()))
+          {
+            fwUploadError = "Nicht angemeldet.";
+            return;
+          }
+
+          if (false == fwUploadAllowed(fwUploadError))
+            return;
+
+          if (false == filename.endsWith(".bin"))
+          {
+            fwUploadError = "Nur .bin Dateien.";
+            return;
+          }
+
+          if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH))
+          {
+            fwUploadError = Update.errorString();
+            return;
+          }
+
+          Log.notice("Firmware upload started: %s" CR, filename.c_str());
+          fwUploadActive = true;
+        }
+
+        if (false == fwUploadActive)
+          return;
+
+        if (Update.write(data, len) != len)
+        {
+          fwUploadError = Update.errorString();
+          Update.abort();
+          fwUploadActive = false;
+          return;
+        }
+
+        if (final)
+        {
+          if (Update.end(true))
+          {
+            fwUploadOk = true;
+            Log.notice("Firmware upload finished: %u bytes" CR, index + len);
+          }
+          else
+          {
+            fwUploadError = Update.errorString();
+          }
+          fwUploadActive = false;
+        }
+      });
 
   webServer.on("/ping", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->send(200, TEXTPLAIN, WiFi.localIP().toString().c_str());

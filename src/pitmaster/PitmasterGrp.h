@@ -37,9 +37,13 @@ public:
   void enable(boolean enabled);
   boolean isEnabled(void) { return this->enabled; };
   Pitmaster *getActivePitmaster(TemperatureBase *temperature);
+  // drive all servos to their safe position before a restart
+  void parkAll();
+  boolean isFlameOutAlarm();
 
 private:
   Pitmaster *pitmasters[MAX_PITMASTERS];
   uint8_t addIndex;
   boolean enabled;
+  boolean shutdownLock;
 };

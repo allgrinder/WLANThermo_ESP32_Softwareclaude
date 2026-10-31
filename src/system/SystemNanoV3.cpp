@@ -26,6 +26,7 @@
 #include "display/DisplayOled.h"
 #include "Constants.h"
 #include "DeviceId.h"
+#include "pitmaster/GasDefaults.h"
 
 // PITMASTER
 #define PITMASTER0IO1 25u   // Fan Pin
@@ -42,6 +43,7 @@
 #define BLE_RESET_PIN 4u
 
 #define STANDBY_SLEEP_CYCLE_TIME 500000u // 500ms
+
 
 enum ledcChannels
 {
@@ -130,6 +132,9 @@ void SystemNanoVx::init()
   profile[pitmasterProfileCount++] = new PitmasterProfile{"BLOWER50", 1, 1, 7.0, 0.01, 200, 25, 100, 80, 25, 75, 0, 1};
   profile[pitmasterProfileCount++] = new PitmasterProfile{"Servo MG995", 2, 2, 104, 0.2, 0, 0, 100, 100, 25, 75};
   profile[pitmasterProfileCount++] = new PitmasterProfile{"Custom", 3, 3, 7.0, 0.2, 0, 0, 100, 100, 0, 100};
+  // gas smoker with servo on the gas valve (gas fork), start values from test/sim
+  //                                                      Name,  Nr, Aktor, Kp,  Ki,    Kd,   DCmin, DCmax, JP, SPMIN, SPMAX, LINK, OPL, TUNE, MINOUT, ATD,  ATH, ATRULE, FO, FODROP, FOWIN, SMART
+  profile[pitmasterProfileCount++] = new PitmasterProfile{"Gas Servo", 4, 2, GAS_KP, GAS_KI, GAS_KD, 0, 100, 100, 0, 100, 0, 1, 0, 0, 20, 1.5, 0, 1, 15, 300, 1};
 
   // Add Damper support
   damperSupport = true;

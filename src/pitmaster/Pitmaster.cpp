@@ -23,8 +23,6 @@
 #include "math.h"
 #include "ArduinoLog.h"
 
-#define PIDKIMAX 95 // ANTI WINDUP LIMIT MAX
-#define PIDKIMIN 0  // ANTI WINDUP LIMIT MIN
 #define PITMIN 0    // LOWER LIMIT SET
 #define PITMAX 100  // UPPER LIMIT SET
 #define PITMASTERSETMIN 50
@@ -42,10 +40,8 @@
 #define OPL_FALL 97   // OPEN LID LIMIT FALLING
 #define OPL_RISE 100  // OPEN LID LIMIT RISING
 #define OPL_PAUSE 300 // OPEN LID PAUSE
+#define OPL_PAUSE_FLAMEOUT 120 // OPEN LID PAUSE with flame out detection (gas)
 #define OPL_THRESHOLD 2
-
-#define ATOVERTEMP 30             // AUTOTUNE OVERTEMPERATURE LIMIT
-#define ATTIMELIMIT 120L * 60000L // AUTOTUNE TIMELIMIT
 
 #define MEDIAN_SIZE 10u
 #define PM_DEFAULT_DCOUNT 15u
@@ -54,8 +50,6 @@
 
 #define JP_THRESHOLD_CELSIUS 100u
 #define JP_THRESHOLD_FAHRENHEIT 212u
-#define JP_THRESHOLD_RANGE 25u
-#define JP_THRESHOLD_RANGE_OUT 1000u
 
 // duty cycle calculation
 // frequency: 50Hz --> 20ms
@@ -95,10 +89,18 @@ Pitmaster::Pitmaster(uint8_t ioPin1, uint8_t channel1, uint8_t ioPin2, uint8_t c
     this->registeredCbUserData = NULL;
     this->cbValue = 0u;
     this->medianValue = new MedianFilter<float>(MEDIAN_SIZE);
-    this->ecount = PM_DEFAULT_DCOUNT;
-    this->dCount = PM_DEFAULT_DCOUNT;
-    this->edif = 0;
-    this->jump = 0;
+    this->pid.setDCount(PM_DEFAULT_DCOUNT);
+    this->filteredTemp = 0;
+    this->medianPrimed = false;
+    this->bootPark = true;
+    this->ffPending = true;
+    this->lidWasOpen = false;
+    this->steadySinceMs = 0u;
+    this->steadySetpoint = 0;
+    this->lastMapSaveMs = 0u;
+    this->parkPending = false;
+    this->parkUntil = 0u;
+    this->events = 0u;
 
     this->servoDcMin = PM_DEFAULT_SERVO_MIN_DUTY_CYCLE;
     this->servoDcMax = PM_DEFAULT_SERVO_MAX_DUTY_CYCLE;
@@ -114,10 +116,19 @@ Pitmaster::Pitmaster(uint8_t ioPin1, uint8_t channel1, uint8_t ioPin2, uint8_t c
 
 void Pitmaster::setType(PitmasterType type)
 {
+    // any change away from auto stops a running autotune
+    if ((pm_auto != type) && this->isAutoTuneRunning())
+    {
+        this->abortAutoTune(AtError::UserStop);
+    }
+
     if(pm_off != type)
     {
         this->typeLast  = type;
     }
+
+    if ((pm_auto == type) && (pm_auto != this->type))
+        this->ffPending = true;
 
     this->type = type;
     settingsChanged = true;
@@ -143,8 +154,13 @@ void Pitmaster::assignProfile(PitmasterProfile *profile)
 {
     if (profile != this->profile)
     {
+        // abort before switching, parking uses the limits of the old profile
+        if (this->isAutoTuneRunning())
+            this->abortAutoTune(AtError::ProfileChange);
+
         this->pidReset();
         this->profile = profile;
+        this->ffPending = true;
         settingsChanged = true;
     }
 }
@@ -161,7 +177,11 @@ void Pitmaster::assignTemperature(TemperatureBase *temperature)
         (temperature->getType() != (uint8_t)SensorType::MaverickRadio))*/
       if (temperature->getType() != (uint8_t)SensorType::MaverickRadio)
     {
+        if ((temperature != this->temperature) && this->isAutoTuneRunning())
+            this->abortAutoTune(AtError::ChannelChange);
+
         this->temperature = temperature;
+        this->medianPrimed = false;
         memset((void *)&this->openLid, 0u, sizeof(this->openLid));
         settingsChanged = true;
     }
@@ -184,6 +204,12 @@ void Pitmaster::setValue(float value)
 
 void Pitmaster::setTargetTemperature(float temperature)
 {
+    if (this->isAutoTuneRunning() && (fabs(temperature - this->autoTune->getSetpoint()) > 0.05f))
+        this->abortAutoTune(AtError::SetpointChange);
+
+    if (fabs(temperature - this->targetTemperature) > 0.05f)
+        this->ffPending = true;
+
     this->targetTemperature = temperature;
     settingsChanged = true;
 }
@@ -224,8 +250,7 @@ void Pitmaster::setDCount(uint8_t dCount)
     // dCount is inside limit?
     if((dCount >= PM_DEFAULT_DCOUNT_MIN) && (dCount <= PM_DEFAULT_DCOUNT_MAX))
     {
-        this->dCount = dCount;
-        this->ecount = dCount;
+        this->pid.setDCount(dCount);
     }
     else
     {
@@ -308,35 +333,117 @@ boolean Pitmaster::startDutyCycleTest(uint8_t actuator, uint8_t value)
     return true;
 }
 
+float Pitmaster::getMinOutput()
+{
+    float minOutput = (this->profile != NULL) ? this->profile->minOutput : 0.0f;
+    return constrain(minOutput, 0.0f, (float)PITMAX);
+}
+
 boolean Pitmaster::startAutoTune()
 {
+    if ((NULL == this->profile) || (NULL == this->temperature) || (false == this->temperature->isActive()))
+        return false;
+
+    if (this->isDutyCycleTestRunning())
+        return false;
+
     if (NULL == this->autoTune)
     {
-        this->autoTune = new AutoTune();
+        this->autoTune = new AutoTuneRelay();
+        if (NULL == this->autoTune)
+            return false;
     }
 
-    memset(this->autoTune, 0u, sizeof(AutoTune));
+    AtConfig config;
+    AutoTuneRelay::defaultConfig(config);
+    config.setpoint = this->targetTemperature;
+    config.minOutput = this->getMinOutput();
+    if (this->profile->atD > 0.0f)
+        config.d = constrain(this->profile->atD, 5.0f, 50.0f);
+    if (this->profile->atH > 0.0f)
+        config.h = constrain(this->profile->atH, 0.2f, 10.0f);
+    config.rule = (AtRule)this->profile->atRule;
 
-    this->autoTune->set = this->targetTemperature * 0.9; // ist INT damit nach unten gerundet  // SET TEMPERTURE: 10% weniger als Reserve
-    float currenttemp = this->temperature->getValue();
+    // autotune runs in auto mode, jump logic is disabled while it runs
+    this->setType(pm_auto);
+    this->pid.clearJump();
+    this->flameOutDetector.reset();
+    this->medianPrimed = false;
+    this->autoTune->start(config, millis());
+    this->profile->autotune = false;
+    this->events |= PM_EVENT_SAVE;
 
-    // macht Autotune überhaupt Sinn?
-    if (this->autoTune->set - currenttemp > (this->targetTemperature * 0.05))
-    {                                  // mindestens 5% von Set
-        this->disableActuators(false); // SWITCH OF HEATER
-        this->autoTune->run = 2;       // AUTOTUNE INITALIZED
-        this->autoTune->max = this->profile->jumppw;
-        PMPRINTPLN("[AT]\t Start!");
-    }
-    else
-    {
-        delete (this->autoTune);
-        this->autoTune = NULL;
-    }
-
-    this->profile->autotune = false; // Zuruecksetzen
+    Log.notice("Autotune started: set %F, d %F, h %F, rule %d" CR, config.setpoint, config.d, config.h, (int)config.rule);
 
     return true;
+}
+
+void Pitmaster::stopAutoTune(AtError reason)
+{
+    if (this->isAutoTuneRunning())
+        this->abortAutoTune(reason);
+}
+
+void Pitmaster::markAutoTuneRestartAbort()
+{
+    // device was restarted while an autotune was running: do not resume the
+    // PID with unknown parameters, hold the burner at minOutput instead
+    if (NULL == this->autoTune)
+        this->autoTune = new AutoTuneRelay();
+
+    if (this->autoTune != NULL)
+        this->autoTune->markRestartAbort(this->targetTemperature);
+
+    this->type = pm_manual;
+    this->typeLast = pm_auto;
+    this->value = this->getMinOutput();
+    this->settingsChanged = true;
+    this->events |= PM_EVENT_SAVE | PM_EVENT_AT_ABORTED;
+    Log.error("Autotune interrupted by restart, holding minOutput" CR);
+}
+
+void Pitmaster::abortAutoTune(AtError reason)
+{
+    if (false == this->isAutoTuneRunning())
+        return;
+
+    this->autoTune->abort(reason);
+
+    // abort: pitmaster off, servo first to minOutput, detached later
+    this->type = pm_off;
+    this->settingsChanged = true;
+    this->value = this->getMinOutput();
+    this->disableActuators(false);
+    this->events |= PM_EVENT_SAVE | PM_EVENT_AT_ABORTED;
+
+    Log.error("Autotune aborted, reason %d" CR, (int)reason);
+}
+
+void Pitmaster::acknowledgeFlameOut()
+{
+    if (this->flameOutDetector.isTriggered())
+    {
+        this->flameOutDetector.acknowledge();
+        this->pid.reset();
+        this->ffPending = true;
+        this->settingsChanged = true;
+        Log.notice("Flame out acknowledged" CR);
+    }
+}
+
+uint16_t Pitmaster::getServoPulseUs()
+{
+    if ((SERVO != initActuator) && (DAMPER != initActuator))
+        return 0u;
+
+    return (uint16_t)(ledcRead(this->channel2) * PM_SERVO_DUTY_CYCLE_DIVISOR);
+}
+
+uint8_t Pitmaster::takeEvents()
+{
+    uint8_t currentEvents = this->events;
+    this->events = 0u;
+    return currentEvents;
 }
 
 boolean Pitmaster::checkDutyCycleTest()
@@ -390,159 +497,69 @@ boolean Pitmaster::checkDutyCycleTest()
 
 boolean Pitmaster::checkAutoTune()
 {
-    // http://www.matthias-trier.de/EUFH_MSR_Vertriebsing_Reglerauswahl_140411.pdf
-
-    if (NULL == this->autoTune)
+    if ((NULL == this->autoTune) || (false == this->autoTune->isRunning()))
         return true;
 
-    if (this->autoTune->stop > 0)
+    boolean active = this->temperature->isActive();
+    float x = active ? this->filterTemperature() : (float)INACTIVEVALUE;
+    float pidOutput = 0;
+
+    // approach phase: regular PID without jump logic
+    if (active && this->autoTune->needsPid())
+        pidOutput = this->pidCalcFiltered(x, false);
+
+    float newValue = this->autoTune->update(x, active, pidOutput, millis());
+
+    if (AtState::Done == this->autoTune->getState())
     {
-        if (this->autoTune->stop == 1)
-        {                         // sauber beendet
-            this->type = pm_auto; // Pitmaster in AUTO fortsetzen
-            PMPRINTPLN("Autotune beendet");
-        }
-        else
-        {
-            this->type = pm_off;
-        }
+        this->profile->kp = this->autoTune->getKp();
+        this->profile->ki = this->autoTune->getKi();
+        this->profile->kd = this->autoTune->getKd();
+        this->pid.reset();
+        this->pid.preloadIntegral(this->autoTune->getOutputMean(), this->profile->ki);
+        this->flameOutDetector.setBias(this->autoTune->getOutputMean());
+        // a new autotune usually follows a mechanical change: start the
+        // learned output table again, the autotune gives its first point
+        this->biasMap.clear();
+        this->biasMap.setProfileId(this->profile->id);
+        this->biasMap.seed(this->autoTune->getSetpoint(), this->autoTune->getOutputMean());
+        this->type = pm_auto;
+        this->settingsChanged = true;
+        this->events |= PM_EVENT_SAVE | PM_EVENT_AT_FINISHED;
+        Log.notice("Autotune finished: Kp %F Ki %F Kd %F" CR, this->profile->kp, this->profile->ki, this->profile->kd);
 
-        //setconfig(ePIT, {}); // TODO save
-
-        delete (this->autoTune);
-        this->autoTune = NULL;
-        return true;
+        // continue in auto mode, start from the bias
+        this->value = max(newValue, this->getMinOutput());
+        this->controlActuators();
+        return false;
     }
 
-    float currentTemp = this->temperature->getValue();
-    unsigned long time = millis();
-
-    // Startbedingungen herstellen
-    if (this->autoTune->run == 2)
+    if (AtState::Aborted == this->autoTune->getState())
     {
-
-        // Phase A1 - Aktor auf MAX einschalten
-        this->autoTune->value = this->autoTune->max;
-        this->autoTune->run = 3;
-    }
-    else if (this->autoTune->run == 3)
-    {
-
-        // Phase A2 - Start Steigungstest
-        if (this->autoTune->temp[0] == 0)
-        {
-            this->autoTune->temp[0] = currentTemp;
-            this->autoTune->time[0] = time;
-            //Serial.print("0: "); Serial.print(this->autoTune->time[0]); Serial.print(" | "); Serial.println(this->autoTune->temp[0]);
-
-            // Vmax bestimmen
-        }
-        else if (this->autoTune->temp[1] == 0 && currentTemp < this->autoTune->set)
-        {
-            float vmax;
-            vmax = 1000.0 * (currentTemp - this->autoTune->temp[0]) / (time - this->autoTune->time[0]);
-            if (vmax > this->autoTune->vmax)
-            {
-                this->autoTune->vmax = vmax;
-                PMPRINTP("vmax: ");
-                PMPRINTLN(vmax);
-            }
-            this->autoTune->temp[0] = currentTemp;
-            this->autoTune->time[0] = time;
-
-            // Phase A3 - Ende Steigung, Anfang Überschwinger
-        }
-        else if (this->autoTune->temp[1] == 0 && currentTemp > this->autoTune->set)
-        {
-            this->autoTune->value = 0; // Pitmaster ruhen
-            this->autoTune->temp[1] = currentTemp;
-            this->autoTune->temp[2] = currentTemp;
-            this->autoTune->time[1] = time;
-            //Serial.print("1: "); Serial.print(this->autoTune->time[1]); Serial.print(" | "); Serial.println(this->autoTune->temp[1]);
-
-            // Während Überschwinger
-        }
-        else if (this->autoTune->temp[1] > 0 && currentTemp > this->autoTune->temp[2])
-        {
-            this->autoTune->temp[2] = currentTemp; // Temperatur nachziehen
-
-            // Phase A4 - Ende Überschwinger (Schwankungen ausgleichen, eventuell abhängig vom Aktor machen)
-        }
-        else if (this->autoTune->temp[1] > 0 && currentTemp * 1.01 < this->autoTune->temp[2])
-        {
-            this->autoTune->time[2] = time;
-            //Serial.print("2: "); Serial.print(this->autoTune->time[2]); Serial.print(" | "); Serial.println(this->autoTune->temp[2]);
-            this->autoTune->value = 25; // Teillast müsste reichen um eine wirkung zu sehen
-            this->autoTune->run = 4;
-        }
-    }
-    else
-    {
-
-        if (currentTemp > this->autoTune->temp[2])
-        { // Totzeit bestimmen, wenn Temperatur wieder steigt
-
-            // Berechnung der Verzugszeit Tt = Tu
-            uint32_t Tt = (millis() - this->autoTune->time[2]) / 1000; // Wiederanlaufzeit
-            PMPRINTLN(Tt);
-
-            // dT = Überschwinger nach Abschaltung
-            float dT = 1.5 * (this->autoTune->temp[2] - this->autoTune->temp[1]);
-            PMPRINTLN(dT);
-
-            // Proportionalbereich Xp aus Anstiegsgeschwindigkeit und Verzugszeit
-            float Xp = 0.83 * Tt * this->autoTune->vmax * (PITMAX / this->autoTune->max);
-            float K = 100.0 / Xp;
-            K = max(K, 100.0f / dT);
-            this->autoTune->Kp = constrain((uint32_t)(K * 10.0), 0, 1000) / 10.0; // Kp > 100 unsinnig
-
-            // Integralzeit: Zeit zum Erreichen vom P-Anteil
-            // Tn1 = (dT * 4.0)/this->autoTune->vmax;
-            // Tn2 = Tt * 4;                    // mehr Verzögerung durch langsames Anwachsen
-            float Tn = max(((dT * 4.0f) / this->autoTune->vmax), (Tt * 4.0f));
-            PMPRINTLN(Tn);
-            K = this->autoTune->Kp / Tn;                                           // Ki = Kp / (Tn)
-            this->autoTune->Ki = constrain((uint32_t)(K * 100.0), 0, 100) / 100.0; // Ki > 1 ist Unsinn
-
-            // D-Anteil über Verhältnis Überschwinger und Anstiegsgeschwindigkeit (Brems-Funktion)
-            K = 7.0 * dT;                         // Faktor gibt Agressivität der Bremsfunktion vor
-            K = constrain((uint16_t)(K), 0, 100); // max 100% bei max. Geschwindigkeit, sonst stocken (i beachten)
-            this->autoTune->Kd = (uint16_t)(K / this->autoTune->vmax);
-
-            PMPRINTP("[AT]\tKp: ");
-            PMPRINT(this->autoTune->Kp);
-            PMPRINTP(" Ki: ");
-            PMPRINT(this->autoTune->Ki);
-            PMPRINTP(" Kd: ");
-            PMPRINTLN(this->autoTune->Kd);
-
-            this->profile->kp = this->autoTune->Kp;
-            this->profile->ki = this->autoTune->Ki;
-            this->profile->kd = this->autoTune->Kd;
-
-            PMPRINTPLN("[AT]\tFinished!");
-            //disableHeater();
-            this->autoTune->stop = 1;
-        }
-    }
-
-    // FEHLER
-    if (currentTemp > (this->autoTune->set + ATOVERTEMP))
-    {
-        PMPRINTPLN("f:AT OVERTEMP");
+        // aborted inside the autotune (overtemp, timeout, sensor, ...)
+        this->type = pm_off;
+        this->settingsChanged = true;
+        this->value = this->getMinOutput();
         this->disableActuators(false);
-        this->autoTune->stop = 2;
+        this->events |= PM_EVENT_SAVE | PM_EVENT_AT_ABORTED;
+        Log.error("Autotune aborted, reason %d" CR, (int)this->autoTune->getError());
+        return false;
     }
 
-    if ((time - this->autoTune->time[0]) > ATTIMELIMIT)
-    { // 20 Minutes
-        PMPRINTPLN("f:AT TIMEOUT");
-        this->disableActuators(false);
-        this->autoTune->stop = 3;
+    // flame out also during autotune
+    if (this->profile->flameOut)
+    {
+        this->flameOutDetector.configure(this->profile->foDrop, this->profile->foWindow);
+        bool relay = (AtPhase::Relay == this->autoTune->getPhase());
+        if (this->flameOutDetector.update(x, this->targetTemperature, newValue, false, millis(), relay))
+        {
+            this->events |= PM_EVENT_FLAMEOUT;
+            this->abortAutoTune(AtError::FlameOut);
+            return false;
+        }
     }
 
-    this->value = this->autoTune->value;
-
+    this->value = newValue;
     this->controlActuators();
 
     return false;
@@ -601,7 +618,8 @@ boolean Pitmaster::checkOpenLid()
         { // Opened lid detected!            
             openLid.detected = true;
             openLid.temp = openLid.ref;
-            openLid.count = OPL_PAUSE; // TODO: check pause
+            // gas: shorter pause, a flame out looks like an open lid at first
+            openLid.count = this->profile->flameOut ? OPL_PAUSE_FLAMEOUT : OPL_PAUSE; // TODO: check pause
             
             Log.notice("OPL: %d" CR, (int)(openLid.fall_c));
             Log.notice("OPL detected: %F" CR, (float)(this->temperature->getValue()));
@@ -630,10 +648,27 @@ float Pitmaster::getOPLTemperature()
 
 void Pitmaster::update()
 {
-    // Control Autotune
-    //TODO
-    /*if (this->autoTune->stop > 0) stopautotune(id);
-  else if (this->autoTune->run == 1) startautotune(id);*/
+    // After a (re)start the servo position is unknown: the PWM stopped and the
+    // servo kept its position, maybe big flame. Drive it to minOutput once
+    // before anything else, with "off" it is detached afterwards (security
+    // review F-6, package S1).
+    if (this->bootPark && (NULL != this->profile))
+    {
+        this->bootPark = false;
+        if (SERVO == this->profile->actuator)
+        {
+            // keep the configured (manual) value, only the position is secured
+            float configuredValue = this->value;
+            this->initActuators();
+            this->startServoPark();
+            this->value = configuredValue;
+            Log.notice("Boot: servo driven to minOutput" CR);
+            return;
+        }
+    }
+
+    // finish a pending servo park (detach after the movement)
+    this->serviceSafePark();
 
     this->checkOpenLid();
 
@@ -654,7 +689,31 @@ void Pitmaster::update()
         this->disableActuators(true);
         break;
     case pm_auto:
-        this->value = (false == this->openLid.detected) ? this->pidCalc() : 0u;
+        if (this->flameOutDetector.isTriggered())
+        {
+            // flame out: never drive further up, hold minOutput until acknowledged
+            this->value = this->getMinOutput();
+        }
+        else if (false == this->openLid.detected)
+        {
+            // lid closed again: restart from the learned output
+            if (this->lidWasOpen)
+                this->ffPending = true;
+            this->lidWasOpen = false;
+
+            if (this->isSmart() && this->ffPending)
+                this->applyFeedforward();
+            this->value = max(this->pidCalc(), this->getMinOutput());
+            if (this->isSmart())
+                this->learnBias();
+        }
+        else
+        {
+            this->lidWasOpen = true;
+            this->steadySinceMs = 0u;
+            this->value = this->getMinOutput();
+        }
+        this->updateFlameOut();
         this->controlActuators();
         break;
     case pm_manual:
@@ -663,12 +722,37 @@ void Pitmaster::update()
     }
 }
 
+void Pitmaster::updateFlameOut()
+{
+    if ((false == this->profile->flameOut) || this->flameOutDetector.isTriggered())
+        return;
+
+    if (false == this->temperature->isActive())
+        return;
+
+    this->flameOutDetector.configure(this->profile->foDrop, this->profile->foWindow);
+
+    // the median filter is not fed while the lid is open, use the raw value then
+    float x = this->openLid.detected ? this->temperature->getValue() : this->filteredTemp;
+
+    if (this->flameOutDetector.update(x, this->targetTemperature, this->value, this->openLid.detected, millis()))
+    {
+        Log.error("Flame out detected! Holding minOutput" CR);
+        this->value = this->getMinOutput();
+        this->settingsChanged = true;
+        this->events |= PM_EVENT_FLAMEOUT;
+    }
+}
+
 void Pitmaster::controlActuators()
 {
     float linkedvalue;
+
+    // a new command supersedes a pending park
+    this->parkPending = false;
     
-    // JUMP DROSSEL
-    if (this->jump && (this->value > this->profile->jumppw))
+    // JUMP DROSSEL (never while autotune runs)
+    if (this->pid.isJump() && (false == this->isAutoTuneRunning()) && (this->value > this->profile->jumppw))
           this->value = this->profile->jumppw;
 
     initActuators();
@@ -802,6 +886,9 @@ void Pitmaster::controlFan(float newValue, float newDcMin, float newDcMax)
 
 void Pitmaster::controlServo(float newValue, float newSPMin, float newSPMax)
 {
+    // never below spmin or above spmax
+    newValue = constrain(newValue, (float)PITMIN, (float)PITMAX);
+
     // limits from global actor
     uint16_t spmin = newSPMin * 10u; // 1. Nachkommastelle
     uint16_t spmax = newSPMax * 10u; // 1. Nachkommastelle
@@ -862,17 +949,29 @@ void Pitmaster::enableStepUp(boolean enable)
     }
 }
 
-void Pitmaster::disableActuators(boolean allowdelay)
+void Pitmaster::startServoPark()
 {
+    // drive the servo to minOutput and detach after SERVO_PARK_TIME_MS
+    float minOutput = this->getMinOutput();
+    this->controlServo(minOutput, this->profile->spmin, this->profile->spmax);
+    this->value = minOutput;
+    this->parkPending = true;
+    this->parkUntil = millis() + SERVO_PARK_TIME_MS;
+    this->pidReset();
+}
 
-    if (true == allowdelay && (initActuator == SERVO || initActuator == DAMPER))
+void Pitmaster::serviceSafePark()
+{
+    if (this->parkPending && ((int32_t)(millis() - this->parkUntil) >= 0))
     {
-        this->controlServo(0, this->profile->spmin, this->profile->spmax);
-        initActuator = NOAR;
-        Serial.println("ServoOFF");
-        return;
+        this->parkPending = false;
+        this->detachActuators();
+        Log.notice("Servo parked and detached" CR);
     }
+}
 
+void Pitmaster::detachActuators()
+{
     dacWrite(this->ioPin1, 0u);
     ledcDetachPin(this->ioPin1);
     ledcDetachPin(this->ioPin2);
@@ -881,6 +980,29 @@ void Pitmaster::disableActuators(boolean allowdelay)
 
     this->enableStepUp(false);
     initActuator = NOAR;
+}
+
+void Pitmaster::disableActuators(boolean allowdelay)
+{
+    // gas safety: a servo is never just cut off where it is, it is driven
+    // to minOutput first and detached when the movement is done
+    if (initActuator == SERVO)
+    {
+        if (false == this->parkPending)
+            this->startServoPark();
+        return;
+    }
+
+    if (true == allowdelay && initActuator == DAMPER)
+    {
+        this->controlServo(0, this->profile->spmin, this->profile->spmax);
+        initActuator = NOAR;
+        Serial.println("ServoOFF");
+        return;
+    }
+
+    this->parkPending = false;
+    this->detachActuators();
 
     this->pidReset();
     memset((void *)&this->openLid, 0u, sizeof(this->openLid));
@@ -893,7 +1015,7 @@ boolean Pitmaster::isDutyCycleTestRunning()
 
 boolean Pitmaster::isAutoTuneRunning()
 {
-    return (NULL != this->autoTune) ? true : false;
+    return ((NULL != this->autoTune) && this->autoTune->isRunning()) ? true : false;
 }
 
 void Pitmaster::setSupplyPin(uint8_t ioPin)
@@ -901,147 +1023,112 @@ void Pitmaster::setSupplyPin(uint8_t ioPin)
     ioSupply = ioPin;
 }
 
-float Pitmaster::pidCalc()
+float Pitmaster::filterTemperature()
 {
-    // see: http://rn-wissen.de/wiki/index.php/Regelungstechnik
-    // see: http://www.ni.com/white-paper/3782/en/
+    float raw = this->temperature->getValue();
 
-    float x = medianValue->AddValue(this->temperature->getValue()); // IST
-    //Serial.printf("GetMedianValue: %f\n", x);
-    float w = this->targetTemperature; // SOLL
-    
-    // PID Parameter
-    float kp, ki, kd;
-    kp = this->profile->kp;
-    ki = this->profile->ki;
-    kd = this->profile->kd;
-
-    int32_t diff;
-    float e;
-
-    // Abweichung bestimmen
-    switch (this->profile->actuator)
+    // prime the median filter after a pause, it may contain stale values
+    if (false == this->medianPrimed)
     {
-    case SSR: // SSR
-        diff = (w - x) * 100;
-        e = diff / 100.0;
-        break;
-
-    default:
-        diff = (w - x) * 10;
-        e = diff / 10.0; // nur Temperaturunterschiede von >0.1°C beachten
+        for (uint8_t i = 0u; i < MEDIAN_SIZE; i++)
+            this->medianValue->AddValue(raw);
+        this->medianPrimed = true;
     }
 
-    // JUMP DETECTION
+    this->filteredTemp = this->medianValue->AddValue(raw);
+    return this->filteredTemp;
+}
+
+float Pitmaster::pidCalcFiltered(float x, bool jumpEnabled)
+{
     float jpthres = JP_THRESHOLD_CELSIUS;
     if (Fahrenheit == this->temperature->getUnit())
     {
         jpthres = JP_THRESHOLD_FAHRENHEIT;
     }
-    float jumpth = JP_THRESHOLD_RANGE_OUT;  // unendlich
-    if (x < jpthres)
+
+    if (jumpEnabled && this->isSmart())
     {
-        jumpth = JP_THRESHOLD_RANGE;
-    }   
-    if (e > jumpth)
-    {
-	    this->jump = true;
-        this->ampch = 1;
-    }
-  
-    // Erkennung Wellenform
-    if (true == this->jump)
-    {
-        if (this->ampch == 1 && e <= 0) 
-        {
-            this->ampch = 2;
-        }
-        else if (this->ampch == 2 && e > 0) 
-        {
-            this->ampch = 3;
-        }
+        return this->pid.calcSmart(x, this->targetTemperature, this->profile->kp, this->profile->ki, this->profile->kd,
+                                   this->pause, this->getMinOutput());
     }
 
-    // JUMP DEACTIVATION
-    if (this->ampch == 3) // Deaktivierung sobald eine Welle durchlaufen
-    {
-        this->jump = false;
-    }
-    
-    /*
-    if (e > jumpth)
-    {
-        this->jump = true;
-    }
-    else if (e <= 0) // Memory (daher else if) bis Soll erreicht
-    {
-        this->jump = false;
-    }*/
+    return this->pid.calc(x, this->targetTemperature, this->profile->kp, this->profile->ki, this->profile->kd,
+                          (SSR == this->profile->actuator), jpthres, this->pause, jumpEnabled);
+}
 
-    // Proportional-Anteil
-    float p_out = kp * e;
+// smart control: start the integral at the learned steady output for the
+// setpoint (feedforward), the PID only corrects the rest
+void Pitmaster::applyFeedforward()
+{
+    this->ffPending = false;
 
-    // Differential-Anteil (Intervall-Berechnung)
-    this->ecount++;
-    if (this->ecount >= this->dCount) {
-        this->edif = (e - this->elast) / (this->pause / 1000.0);
-        this->edif = this->edif / (float) this->dCount;
-        this->elast = e;
-        this->ecount = 0u;
+    if (this->biasMap.getProfileId() != this->profile->id)
+    {
+        this->biasMap.clear();
+        this->biasMap.setProfileId(this->profile->id);
     }
 
-    float d_out = kd * edif;
-
-    // i-Anteil wechsl: https://github.com/WLANThermo/WLANThermo_v2/blob/b7bd6e1b56fe5659e8750c17c6dd1cd489872f6c/software/usr/sbin/wlt_2_pitmaster.py
-    // Integral-Anteil
-    float i_out;
-    if (ki != 0)
+    float estimate;
+    if (this->biasMap.estimate(this->targetTemperature, estimate))
     {
-
-        // Sprünge im Reglerausgangswert bei Anpassung von Ki vermeiden
-        if (ki != this->Ki_alt)
-        {
-            this->esum = (this->esum * this->Ki_alt) / ki;
-            this->Ki_alt = ki;
-        }
-
-        // Anti-Windup I-Anteil
-        // Keine Erhöhung I-Anteil wenn Regler bereits an der Grenze ist
-        if (p_out < PITMAX)
-        { //if ((p_out + d_out) < PITMAX) {
-            this->esum += e * (this->pause / 1000.0);
-        }
-
-        // Anti-Windup I-Anteil (Limits)
-        if (this->esum * ki > PIDKIMAX)
-            this->esum = PIDKIMAX / ki;
-        else if (this->esum * ki < PIDKIMIN)
-            this->esum = PIDKIMIN / ki;
-
-        i_out = ki * this->esum;
+        estimate = max(estimate, this->getMinOutput());
+        this->pid.preloadIntegral(estimate, this->profile->ki);
+        this->flameOutDetector.setBias(estimate);
+        Log.notice("Feedforward: %F %% for %F" CR, estimate, this->targetTemperature);
     }
-    else
+}
+
+// learn the steady output while the temperature is held at the setpoint
+#define SMART_STEADY_BAND 1.5f
+#define SMART_STEADY_MS (300u * 1000u)
+#define SMART_MAP_SAVE_MS (30u * 60u * 1000u)
+
+void Pitmaster::learnBias()
+{
+    uint32_t now = millis();
+    float e = this->filteredTemp - this->targetTemperature;
+
+    if ((fabs(e) > SMART_STEADY_BAND) || (fabs(this->steadySetpoint - this->targetTemperature) > 0.05f) ||
+        this->flameOutDetector.isSuspected())
     {
-        // Historie vergessen, da wir nach Ki = 0 von 0 aus anfangen
-        this->esum = 0;
-        i_out = 0;
-        this->Ki_alt = 0;
+        this->steadySinceMs = 0u;
+        this->steadySetpoint = this->targetTemperature;
+        return;
     }
 
-    // PID-Regler berechnen
-    float y = p_out + i_out + d_out;
-    y = constrain(y, PITMIN, PITMAX); // Auflösung am Ausgang ist begrenzt
+    if (0u == this->steadySinceMs)
+    {
+        this->steadySinceMs = (0u == now) ? 1u : now;
+        return;
+    }
 
-    //PMPRINTLN("[PM]\tPID:" + String(y, 1) + "\tp:" + String(p_out, 1) + "\ti:" + String(i_out, 2) + "\td:" + String(d_out, 1));
+    if ((now - this->steadySinceMs) < SMART_STEADY_MS)
+        return;
 
-    return y;
+    if (this->biasMap.getProfileId() != this->profile->id)
+    {
+        this->biasMap.clear();
+        this->biasMap.setProfileId(this->profile->id);
+    }
+
+    // the output that holds the setpoint is the integral part
+    boolean newBin = this->biasMap.learn(this->targetTemperature, this->pid.getI());
+
+    if (newBin || ((now - this->lastMapSaveMs) >= SMART_MAP_SAVE_MS))
+    {
+        this->lastMapSaveMs = now;
+        this->events |= PM_EVENT_SAVE;
+    }
+}
+
+float Pitmaster::pidCalc()
+{
+    float x = this->filterTemperature(); // IST
+    return this->pidCalcFiltered(x, true);
 }
 
 void Pitmaster::pidReset()
 {
-    this->esum = 0;
-    this->elast = 0;
-    this->Ki_alt = 0;
-    this->jump = 0;
-    this->ampch = 0;
+    this->pid.reset();
 }

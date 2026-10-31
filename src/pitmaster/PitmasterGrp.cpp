@@ -27,6 +27,7 @@ PitmasterGrp::PitmasterGrp()
 {
   this->addIndex = 0;
   this->enabled = true;
+  this->shutdownLock = false;
 
   for (uint8_t i = 0u; i < MAX_PITMASTERS; i++)
     pitmasters[i] = NULL;
@@ -40,9 +41,19 @@ void PitmasterGrp::add(Pitmaster *pitmaster)
 void PitmasterGrp::update()
 {
   if (this->enabled != true)
+  {
+    // pitmasters are disabled, but a started servo park has to be finished
+    for (uint8_t i = 0; i < MAX_PITMASTERS; i++)
+    {
+      if (pitmasters[i] != NULL)
+        pitmasters[i]->serviceSafePark();
+    }
     return;
+  }
 
   Log.verbose("PitmasterGrp::update()" CR);
+
+  boolean save = false;
 
   for (uint8_t i = 0; i < MAX_PITMASTERS; i++)
   {
@@ -50,8 +61,49 @@ void PitmasterGrp::update()
     {
       pitmasters[i]->update();
       pitmasters[i]->handleCallbacks();
+
+      uint8_t events = pitmasters[i]->takeEvents();
+
+      if (events & PM_EVENT_SAVE)
+        save = true;
+
+      if (events & PM_EVENT_FLAMEOUT)
+      {
+        TemperatureBase *temperature = pitmasters[i]->getAssignedTemperature();
+        gSystem->notification.notifyFlameOut(TemperatureGrp::getIndex(temperature), pitmasters[i]->getTargetTemperature());
+      }
     }
   }
+
+  if (save)
+    this->saveConfig();
+}
+
+void PitmasterGrp::parkAll()
+{
+  // used right before a restart: stop controlling and keep it stopped
+  this->shutdownLock = true;
+  this->enabled = false;
+
+  for (uint8_t i = 0; i < MAX_PITMASTERS; i++)
+  {
+    if (pitmasters[i] != NULL)
+    {
+      pitmasters[i]->stopAutoTune(AtError::Disabled);
+      pitmasters[i]->disableActuators(false);
+    }
+  }
+}
+
+boolean PitmasterGrp::isFlameOutAlarm()
+{
+  for (uint8_t i = 0; i < MAX_PITMASTERS; i++)
+  {
+    if ((pitmasters[i] != NULL) && pitmasters[i]->isFlameOut())
+      return true;
+  }
+
+  return false;
 }
 uint8_t PitmasterGrp::count()
 {
@@ -68,6 +120,7 @@ void PitmasterGrp::loadConfig()
     JsonArray &_master = json["pm"];
 
     byte pitsize = 0;
+    boolean restartDuringAutotune[MAX_PITMASTERS] = {false};
 
     for (JsonArray::iterator it = _master.begin(); it != _master.end(); ++it)
     {
@@ -92,6 +145,24 @@ void PitmasterGrp::loadConfig()
           pm->setServoMinDutyCyle(_master[pitsize]["servoDcMin"].as<uint16_t>());        
         if(_master[pitsize].asObject().containsKey("servoDcMax"))
           pm->setServoMaxDutyCyle(_master[pitsize]["servoDcMax"].as<uint16_t>());
+
+        // learned output table of the smart control
+        if (_master[pitsize].asObject().containsKey("bm"))
+        {
+          BiasMap *map = pm->getBiasMap();
+          map->clear();
+          map->setProfileId(_master[pitsize]["bmp"].as<uint8_t>());
+          JsonArray &_bm = _master[pitsize]["bm"];
+          for (uint8_t b = 0u; (b < _bm.size()) && (b < BIASMAP_BINS); b++)
+          {
+            int16_t v = _bm[b].as<int16_t>();
+            if (v >= 0)
+              map->setBin(b, v / 10.0f, BIASMAP_KNOWN_S);
+          }
+        }
+
+        // restart during a running autotune: hold minOutput, see Pitmaster
+        restartDuringAutotune[pitsize] = (_master[pitsize].asObject().containsKey("at") && _master[pitsize]["at"].as<uint8_t>());
       }
 
       pitsize++;
@@ -120,9 +191,35 @@ void PitmasterGrp::loadConfig()
         profile->spmax = _pid[pidsize]["SPmax"];
         profile->link = _pid[pidsize]["link"];
         profile->opl = _pid[pidsize]["ol"];
+
+        // gas fork extensions, keep defaults when not stored
+        JsonObject &_p = _pid[pidsize].asObject();
+        if (_p.containsKey("mo"))
+          profile->minOutput = _p["mo"];
+        if (_p.containsKey("atd"))
+          profile->atD = _p["atd"];
+        if (_p.containsKey("ath"))
+          profile->atH = _p["ath"];
+        if (_p.containsKey("atr"))
+          profile->atRule = _p["atr"];
+        if (_p.containsKey("fo"))
+          profile->flameOut = _p["fo"];
+        if (_p.containsKey("fod"))
+          profile->foDrop = _p["fod"];
+        if (_p.containsKey("fow"))
+          profile->foWindow = _p["fow"];
+        if (_p.containsKey("sm"))
+          profile->smart = _p["sm"];
       }
 
       pidsize++;
+    }
+
+    // profiles are loaded now, handle an autotune interrupted by a restart
+    for (uint8_t i = 0u; i < MAX_PITMASTERS; i++)
+    {
+      if ((pitmasters[i] != NULL) && restartDuringAutotune[i])
+        pitmasters[i]->markAutoTuneRestartAbort();
     }
   }
 }
@@ -148,6 +245,17 @@ void PitmasterGrp::saveConfig()
       _ma["dCount"] = pm->getDCount();
       _ma["servoDcMin"] = pm->getServoMinDutyCyle();
       _ma["servoDcMax"] = pm->getServoMaxDutyCyle();
+      if (pm->isAutoTuneRunning())
+        _ma["at"] = 1;
+
+      BiasMap *map = pm->getBiasMap();
+      if (map->knownCount() > 0u)
+      {
+        _ma["bmp"] = map->getProfileId();
+        JsonArray &_bm = _ma.createNestedArray("bm");
+        for (uint8_t b = 0u; b < BIASMAP_BINS; b++)
+          _bm.add(map->isKnown(b) ? (int16_t)(map->getValue(b) * 10.0f + 0.5f) : (int16_t)-1);
+      }
     }
   }
 
@@ -162,9 +270,9 @@ void PitmasterGrp::saveConfig()
       _pid["name"] = profile->name;
       _pid["id"] = profile->id;
       _pid["aktor"] = profile->actuator;
-      _pid["Kp"] = double_with_n_digits(profile->kp, 1);
-      _pid["Ki"] = double_with_n_digits(profile->ki, 3);
-      _pid["Kd"] = double_with_n_digits(profile->kd, 1);
+      _pid["Kp"] = double_with_n_digits(profile->kp, 2);
+      _pid["Ki"] = double_with_n_digits(profile->ki, 5);
+      _pid["Kd"] = double_with_n_digits(profile->kd, 2);
       _pid["DCmin"] = double_with_n_digits(profile->dcmin, 1);
       _pid["DCmax"] = double_with_n_digits(profile->dcmax, 1);
       _pid["jp"] = profile->jumppw;
@@ -172,6 +280,14 @@ void PitmasterGrp::saveConfig()
       _pid["SPmax"] = double_with_n_digits(profile->spmax, 1);
       _pid["link"] = profile->link;
       _pid["ol"] = profile->opl;
+      _pid["mo"] = double_with_n_digits(profile->minOutput, 1);
+      _pid["atd"] = double_with_n_digits(profile->atD, 1);
+      _pid["ath"] = double_with_n_digits(profile->atH, 1);
+      _pid["atr"] = profile->atRule;
+      _pid["fo"] = profile->flameOut;
+      _pid["fod"] = double_with_n_digits(profile->foDrop, 1);
+      _pid["fow"] = profile->foWindow;
+      _pid["sm"] = profile->smart;
     }
   }
 
@@ -180,7 +296,7 @@ void PitmasterGrp::saveConfig()
 
 void PitmasterGrp::enable(boolean enabled)
 {
-  if (this->enabled == enabled)
+  if ((this->enabled == enabled) || this->shutdownLock)
     return;
 
   if (enabled != true)
@@ -189,6 +305,7 @@ void PitmasterGrp::enable(boolean enabled)
     {
       if (pitmasters[i] != NULL)
       {
+        pitmasters[i]->stopAutoTune(AtError::Disabled);
         pitmasters[i]->disableActuators(false);
       }
     }

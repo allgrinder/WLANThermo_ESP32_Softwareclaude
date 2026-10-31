@@ -1,0 +1,24 @@
+{
+ "name": "elfuego-2026-10-30",
+ "rmse": 1.408,
+ "params": {
+  "deadTimeS": 62.969,
+  "tauS": 272.416,
+  "tMin": 95.0,
+  "tMax": 180.23,
+  "valveExp": 2.541,
+  "tauSensorS": 4.74,
+  "valveSat": 51.181
+ },
+ "fixed": [
+  "tMin"
+ ],
+ "segments_min": [
+  86.6
+ ],
+ "reference_rmse": {
+  "P1": 22.76,
+  "P2": 39.485,
+  "P3": 58.467
+ }
+}

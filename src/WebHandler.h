@@ -76,6 +76,9 @@ public:
   bool setIoT(AsyncWebServerRequest *request, uint8_t *datas);
   bool setPush(AsyncWebServerRequest *request, uint8_t *datas);
   bool setDCTest(AsyncWebServerRequest *request, uint8_t *datas);
+  bool setAutotune(AsyncWebServerRequest *request, uint8_t *datas);
+  bool applyServerAPI(uint8_t *datas, uint8_t policy);
+  bool setTelemetry(AsyncWebServerRequest *request, uint8_t *datas);
   bool setBluetooth(AsyncWebServerRequest *request, uint8_t *datas);
 
 private:

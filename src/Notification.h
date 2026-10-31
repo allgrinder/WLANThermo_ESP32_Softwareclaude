@@ -29,7 +29,8 @@ enum class NotificationType
   Test = 0,
   LowerLimit,
   UpperLimit,
-  Battery
+  Battery,
+  FlameOut // sent as LowerLimit to the server, see API::notificationObj
 };
 
 enum class NotificationService
@@ -49,6 +50,7 @@ typedef struct
   NotificationType type;
   NotificationService testService;
   void *testConfig;
+  int32_t flameOutLimit;
 } NotificationData;
 
 typedef struct
@@ -102,6 +104,7 @@ public:
   String getDeviceTokenFromHash(String hash);
   String getNotificationSound(uint8_t soundIndex);
   void check(TemperatureBase *temperature);
+  void notifyFlameOut(uint8_t channel, float setpoint);
   void update();
 
 private:
@@ -109,5 +112,7 @@ private:
   PushTelegramType pushTelegram;
   PushPushoverType pushPushover;
   PushAppType pushApp;
-  
+  boolean flameOutPending;
+  uint8_t flameOutChannel;
+  int32_t flameOutSetpoint;
 };

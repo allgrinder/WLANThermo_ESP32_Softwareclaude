@@ -38,6 +38,7 @@ typedef struct
 {
   uint8_t urlIndex;
   const char* requestData;
+  uint8_t apiIndex;
 } CloudRequest;
 
 enum

@@ -28,6 +28,7 @@
 #include "WServer.h"
 #include "API.h"
 #include "DbgPrint.h"
+#include "ServerApiPolicy.h"
 #include "system/SystemBase.h"
 #include "display/DisplayBase.h"
 #include "Version.h"
@@ -103,6 +104,8 @@ static const NanoWebHandlerListType nanoWebHandlerList[] = {
     {"/setpush", HTTP_POST, HTTP_POST, NULL, &NanoWebHandler::setPush},
     {"/setapi", HTTP_POST, HTTP_POST, NULL, &NanoWebHandler::setServerAPI},
     {"/setDC", HTTP_POST, 0, NULL, &NanoWebHandler::setDCTest},
+    {"/setautotune", HTTP_POST, HTTP_POST, NULL, &NanoWebHandler::setAutotune},
+    {"/settelemetry", HTTP_POST, HTTP_POST, NULL, &NanoWebHandler::setTelemetry},
     {"/setbluetooth", HTTP_POST, HTTP_POST, NULL, &NanoWebHandler::setBluetooth}};
 
 NanoWebHandler::NanoWebHandler()
@@ -945,6 +948,10 @@ bool NanoWebHandler::setPitmaster(AsyncWebServerRequest *request, uint8_t *datas
     if (NULL == pm)
       continue;
 
+    // an autotune aborted by this request (profile, channel or setpoint
+    // change) leaves the pitmaster off, see Pitmaster::abortAutoTune()
+    boolean autotuneWasRunning = pm->isAutoTuneRunning();
+
     if (_pitmaster.containsKey("id"))
       id = _pitmaster["id"];
     else
@@ -989,6 +996,12 @@ bool NanoWebHandler::setPitmaster(AsyncWebServerRequest *request, uint8_t *datas
     bool _manual = false;
     bool _auto = false;
 
+    if (autotuneWasRunning && (false == pm->isAutoTuneRunning()))
+    {
+      ii++;
+      continue;
+    }
+
     if (typ == "auto")
       _auto = true;
     else if (typ == "manual")
@@ -1003,12 +1016,10 @@ bool NanoWebHandler::setPitmaster(AsyncWebServerRequest *request, uint8_t *datas
       pm->setType(pm_manual);
     }
 
-    // kann gespeichert werden und was ist mit stoppen des autotune
+    // autotune is started explicitly via /setautotune
     if (_auto)
     {
       pm->setType(pm_auto);
-      if (pm->getAssignedProfile()->autotune)
-        pm->startAutoTune();
     }
 
     ii++;
@@ -1093,6 +1104,36 @@ bool NanoWebHandler::setPID(AsyncWebServerRequest *request, uint8_t *datas)
     if (_pid.containsKey("link"))
       profile->link = _pid["link"];
 
+    // gas fork extensions
+    if (_pid.containsKey("minOut"))
+    {
+      val = _pid["minOut"];
+      profile->minOutput = constrain(val, 0, 100);
+    }
+    if (_pid.containsKey("atD"))
+    {
+      val = _pid["atD"];
+      profile->atD = constrain(val, 5, 50);
+    }
+    if (_pid.containsKey("atH"))
+    {
+      val = _pid["atH"];
+      profile->atH = constrain(val, 0.2, 10);
+    }
+    if (_pid.containsKey("atRule"))
+      profile->atRule = constrain(_pid["atRule"].as<uint8_t>(), 0, 2);
+    if (_pid.containsKey("foOn"))
+      profile->flameOut = _pid["foOn"].as<boolean>();
+    if (_pid.containsKey("foDrop"))
+    {
+      val = _pid["foDrop"];
+      profile->foDrop = constrain(val, 3, 100);
+    }
+    if (_pid.containsKey("foWin"))
+      profile->foWindow = constrain(_pid["foWin"].as<uint16_t>(), 60, 600);
+    if (_pid.containsKey("smart"))
+      profile->smart = _pid["smart"].as<boolean>();
+
     ii++;
   }
 
@@ -1101,7 +1142,14 @@ bool NanoWebHandler::setPID(AsyncWebServerRequest *request, uint8_t *datas)
   return 1;
 }
 
+// local /setapi endpoint: everything allowed (authenticated with web password)
 bool NanoWebHandler::setServerAPI(AsyncWebServerRequest *request, uint8_t *datas)
+{
+  return applyServerAPI(datas, SERVER_ANSWER_ALL);
+}
+
+// server answers (Cloud.cpp) only with the parts allowed by ServerApiPolicy.h
+bool NanoWebHandler::applyServerAPI(uint8_t *datas, uint8_t policy)
 {
 
   //printRequest(datas);
@@ -1110,6 +1158,8 @@ bool NanoWebHandler::setServerAPI(AsyncWebServerRequest *request, uint8_t *datas
   JsonObject &json = jsonBuffer.parseObject((const char *)datas); //https://github.com/esp8266/Arduino/issues/1321
   if (!json.success())
     return 0;
+
+  filterServerAnswer(json, policy);
 
   // URL
   if (json.containsKey("url"))
@@ -1229,6 +1279,89 @@ bool NanoWebHandler::setDCTest(AsyncWebServerRequest *request, uint8_t *datas)
   val /= 10;                                                      //TODO: why is value multiplied with 10 in frontend?
   byte id = 0;                                                    // Pitmaster0 // TODO: add id to frontend
   return gSystem->pitmasters[id]->startDutyCycleTest(aktor, val); //TODO NULL pointer!!!
+}
+
+// Autotune and flame out control
+// {"id":0, "cmd":"start"|"stop"|"ackFlameOut"|"resetLearned", "set":130}
+bool NanoWebHandler::setAutotune(AsyncWebServerRequest *request, uint8_t *datas)
+{
+  printRequest(datas);
+
+  DynamicJsonBuffer jsonBuffer;
+  JsonObject &json = jsonBuffer.parseObject((const char *)datas);
+  if (!json.success())
+    return false;
+
+  uint8_t id = json.containsKey("id") ? json["id"].as<uint8_t>() : 0u;
+  if (id >= gSystem->pitmasters.count())
+    return false;
+
+  Pitmaster *pm = gSystem->pitmasters[id];
+  if (NULL == pm)
+    return false;
+
+  String cmd = json.containsKey("cmd") ? json["cmd"].asString() : "";
+  bool result = false;
+
+  if (cmd == "start")
+  {
+    if (pm->isAutoTuneRunning())
+      return false;
+
+    if (json.containsKey("set"))
+      pm->setTargetTemperature(json["set"].as<float>());
+
+    result = pm->startAutoTune();
+  }
+  else if (cmd == "stop")
+  {
+    result = pm->isAutoTuneRunning();
+    pm->stopAutoTune(AtError::UserStop);
+  }
+  else if (cmd == "ackFlameOut")
+  {
+    pm->acknowledgeFlameOut();
+    result = true;
+  }
+  else if (cmd == "resetLearned")
+  {
+    // smart control: forget the learned output table (e.g. after a change
+    // of the servo linkage)
+    pm->getBiasMap()->clear();
+    result = true;
+  }
+
+  gSystem->pitmasters.saveConfig();
+
+  return result;
+}
+
+// Debug telemetry (gas fork): {"enabled":true,"url":"http://192.168.178.250/telemetry","interval":1}
+bool NanoWebHandler::setTelemetry(AsyncWebServerRequest *request, uint8_t *datas)
+{
+  printRequest(datas);
+
+  DynamicJsonBuffer jsonBuffer;
+  JsonObject &json = jsonBuffer.parseObject((const char *)datas);
+  if (!json.success())
+    return false;
+
+  TelemetryConfig config = gSystem->telemetry.getConfig();
+  if (json.containsKey("enabled"))
+    config.enabled = json["enabled"].as<boolean>();
+  if (json.containsKey("url"))
+  {
+    String url = json["url"].asString();
+    // plain http only (no TLS on the device)
+    if ((url.length() > 0u) && !url.startsWith("http://"))
+      return false;
+    config.url = url;
+  }
+  if (json.containsKey("interval"))
+    config.interval = json["interval"].as<uint8_t>();
+
+  gSystem->telemetry.setConfig(config);
+  return true;
 }
 
 bool NanoWebHandler::setBluetooth(AsyncWebServerRequest *request, uint8_t *datas)

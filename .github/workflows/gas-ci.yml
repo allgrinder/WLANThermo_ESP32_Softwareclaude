@@ -1,0 +1,79 @@
+name: Gas fork CI
+on:
+  push:
+    branches:
+      - 'feature/**'
+      - 'claude/**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  host-tests:
+    name: Host simulation tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run simulator tests
+        run: |
+          make -C test/sim test
+      - name: Fitted plants of real cooks (informational)
+        if: always()
+        run: |
+          make -C test/sim plants | tee plants.txt
+          { echo '```'; cat plants.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          # one annotation per plant and mode (annotations are readable without sign-in)
+          python3 - <<'EOF'
+          for block in open("plants.txt").read().split("=== ")[1:]:
+              title, _, body = block.partition("\n")
+              keep = [l.strip() for l in body.splitlines() if "FAIL" in l or "PASSED" in l or l.startswith("|")]
+              msg = "\n".join(keep).replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              print(f"::notice title={title}::{msg[:4000]}")
+          EOF
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: simulation-results
+          path: test/sim/out
+          if-no-files-found: ignore
+
+  update-server:
+    name: Update server tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: pytest
+        working-directory: update-server/wlt-update
+        run: |
+          pip install -r requirements-dev.txt
+          python -m pytest -q tests
+      - name: Docker integration test (DNS override, update and proxy path)
+        working-directory: update-server/test
+        run: ./run_integration.sh
+
+  firmware:
+    name: Build nanoV3
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install -U platformio
+      - name: Build
+        run: platformio run -e nanoV3 | tee build.log
+      - name: Size report
+        run: |
+          grep -E "^(RAM|Flash):" build.log | tee size.txt
+          cp .pio/build/nanoV3/firmware.bin nanoV3.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nanoV3-firmware
+          path: |
+            nanoV3.bin
+            size.txt

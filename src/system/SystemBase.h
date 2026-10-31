@@ -34,9 +34,10 @@
 #include "Mqtt.h"
 #include "OtaUpdate.h"
 #include "Item.h"
+#include "Telemetry.h"
 
 #define MAX_PITMASTERS 2u
-#define MAX_PITMASTERPROFILES 4u
+#define MAX_PITMASTERPROFILES 5u
 
 class SystemBase
 {
@@ -59,6 +60,8 @@ public:
   void wireLock();
   void wireRelease();
   void run();
+  // remove the control task from the task watchdog (before an OTA update)
+  void suspendWatchdog();
 
   String getDeviceName();
   String getDeviceID();
@@ -82,6 +85,7 @@ public:
   Mqtt mqtt;
   OtaUpdate otaUpdate;
   Item item;
+  Telemetry telemetry;
 
 protected:
   Buzzer *buzzer;
@@ -106,6 +110,8 @@ protected:
 
 private:
   static void task(void *parameter);
+  TaskHandle_t taskHandle;
+  volatile boolean watchdogActive;
 };
 
 extern SystemBase *gSystem;

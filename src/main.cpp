@@ -138,6 +138,7 @@ void ConnectTask(void *parameter)
       gSystem->mqtt.update();
       gSystem->notification.update();
       gSystem->cloud.update();
+      gSystem->telemetry.update();
     }
 
     // Wait for the next cycle.

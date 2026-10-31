@@ -26,6 +26,7 @@
 #include "WebHandler.h"
 #include "DbgPrint.h"
 #include "ArduinoLog.h"
+#include "ServerApiPolicy.h"
 #include <SPIFFS.h>
 #include "ArduinoLog.h"
 
@@ -62,6 +63,9 @@ ServerData Cloud::serverurl[3] = {
 asyncHTTPrequest Cloud::apiClient = asyncHTTPrequest();
 QueueHandle_t Cloud::apiQueue = xQueueCreate(API_QUEUE_SIZE, sizeof(CloudRequest));
 bool Cloud::clientlog = false;
+// request in flight, decides which parts of the answer are applied
+static uint8_t currentApiIndex = NOAPI;
+static uint8_t currentUrlIndex = APILINK;
 
 enum
 {
@@ -352,7 +356,9 @@ void Cloud::onReadyStateChange(void *optParm, asyncHTTPrequest *request, int rea
 
     if (HTTP_STATUS_OK == responseCode)
     {
-      nanoWebHandler.setServerAPI(NULL, (uint8_t *)request->responseText().c_str());
+      uint8_t policy = serverAnswerPolicy(APIUPDATE == currentApiIndex, CUSTOMLINK == currentUrlIndex);
+      if (policy & SERVER_ANSWER_PARSE)
+        nanoWebHandler.applyServerAPI((uint8_t *)request->responseText().c_str(), policy);
     }
     else
     {
@@ -373,7 +379,7 @@ void Cloud::sendAPI(int apiIndex, int urlIndex)
   if(requestDataPointer != NULL)
   {
     strcpy(requestDataPointer, requestDataString.c_str());
-    CloudRequest cloudRequest = {urlIndex, requestDataPointer};
+    CloudRequest cloudRequest = {(uint8_t)urlIndex, requestDataPointer, (uint8_t)apiIndex};
     if(xQueueSend(apiQueue, &cloudRequest, 0u) != pdTRUE)
     {
       delete cloudRequest.requestData;
@@ -399,6 +405,9 @@ void Cloud::handleQueue()
 
     if (clientlog)
       apiClient.setDebug(true);
+
+    currentApiIndex = cloudRequest.apiIndex;
+    currentUrlIndex = cloudRequest.urlIndex;
 
     String url = (cloudRequest.urlIndex != CUSTOMLINK) ? String("http://" + serverurl[cloudRequest.urlIndex].host + "/") : config.customUrl;
 

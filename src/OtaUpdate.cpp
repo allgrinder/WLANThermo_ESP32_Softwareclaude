@@ -45,6 +45,7 @@ OtaUpdate::OtaUpdate()
 
 void OtaUpdate::startUpdate()
 {
+  gSystem->suspendWatchdog();
   otaUpdateState = OtaUpdateState::UpdateInProgress;
   xTaskCreatePinnedToCore(OtaUpdate::task, "OtaUpdate::task", 10000, this, TASK_PRIORITY_OTA_UPDATE, NULL, 1);
 }
@@ -61,6 +62,10 @@ void OtaUpdate::task(void *parameter)
 
   if (success)
     success = otaUpdate->doDisplayUpdate();
+
+  // gas safety: bring servos to minOutput before the PWM stops
+  gSystem->pitmasters.parkAll();
+  delay(SERVO_PARK_TIME_MS);
 
   if (success)
   {
