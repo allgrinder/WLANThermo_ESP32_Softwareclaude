@@ -82,7 +82,8 @@ Sprache mit dem Nutzer: Deutsch. Code-Kommentare: Englisch, wie im Upstream.
 2. Autotune robuster für die gemessene Strecke (Bias-Schätzung bei hohem Sollwert) und
    Smart-Modus mit SPmax 45 (hält nur ±15 °C) untersuchen.
 3. Nach jedem Grillabend: Daten (5 s) → `tools/fit_plant.py` → Modell in `test/sim/plants`
-   verfeinern. Offen am Modell: tMin mit Wasser (festgesetzt 95 °C), Wasserschale als
+   verfeinern. Bedingungen (Außentemperatur, Wind, Grillgut, Wasser, Deckel) nach
+   `docs/cooks/VORLAGE.md` festhalten; vor dem Start beim Nutzer abfragen. Offen am Modell: tMin mit Wasser (festgesetzt 95 °C), Wasserschale als
    Störung (hält ~1,5 h, ohne Wasser deutlich heißer).
 4. Neu bewerten: Ventil-Linearisierung (Messung spricht dafür, SPmax 25 ist der einfache
    Schritt), Bremspunkt beim Anheizen (in der Simulation verworfen).

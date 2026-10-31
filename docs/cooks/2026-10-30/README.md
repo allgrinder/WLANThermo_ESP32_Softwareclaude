@@ -10,6 +10,18 @@ Handbetrieb mit festen Servo-Stufen, um die Strecke zu vermessen. Kein Grillgut.
 - Mitschrieb `GET /data` alle 5 s: [stufentest_5s.csv](stufentest_5s.csv) (Cloud-Format,
   Spalten wie `tools/analyze_cook.py` sie liest, plus `flameOut`, `lid`, `soc`, `rssi`)
 
+## Bedingungen
+
+| | |
+|---|---|
+| Ort | Garage, Tor offen |
+| Außentemperatur | 10–12 °C in der Garage (geschätzt, kein Außenfühler) |
+| Wind | nicht notiert |
+| Wasserschale | voll zu Beginn, leer ungefähr um 22:05 |
+| Grillgut | keins |
+| Deckel offen | nie |
+| Gasflasche | nicht notiert |
+
 ## Ablauf
 
 | Uhrzeit | Servo | Bemerkung |
